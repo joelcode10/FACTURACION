@@ -1,0 +1,33 @@
+{
+  "groups": [
+    {
+      "id": "g1",
+      "fechaInicioMin": "2025-10-01",
+      "cliente": "Empresa X",
+      "unidadProduccion": "Sede A",
+      "tipoEvaluacion": "Ingreso",
+      "importe": 1234.56
+    },
+    {
+      "id": "g2",
+      "fechaInicioMin": "2025-10-05",
+      "cliente": "Empresa Y",
+      "unidadProduccion": "Sede B",
+      "tipoEvaluacion": "Periódico",
+      "importe": 765.43
+    }
+  ],
+  "detailsByGroupId": {
+    "g1": [
+      { "fechaInicio": "2025-10-01", "paciente": "GONZALES, Pedro" },
+      { "fechaInicio": "2025-10-02", "paciente": "MENDOZA, Ana" }
+    ],
+    "g2": [
+      { "fechaInicio": "2025-10-05", "paciente": "DÍAZ, Luis" }
+    ]
+  },
+  "filters": {
+    "clientes": ["Empresa X", "Empresa Y"],
+    "tipos": ["Ingreso", "Periódico"]
+  }
+}
