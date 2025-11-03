@@ -1,64 +1,79 @@
-// src/pages/Clientes.jsx
+// src/pages/Hhmm.jsx
 import React, { useState, useMemo } from "react";
-import { fetchClientesProcess } from "../lib/api";
+import { fetchHhmmProcess } from "../lib/api";
 
+// Utilidad para usar la fecha de hoy
 function todayISO() {
   const d = new Date();
   return d.toISOString().slice(0, 10);
 }
 
-export default function Clientes() {
+export default function Hhmm() {
   const [fromDate, setFromDate] = useState(todayISO());
   const [toDate, setToDate] = useState(todayISO());
-  const [condicionPago, setCondicionPago] = useState("todas");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const [groups, setGroups] = useState([]);
-  const [filters, setFilters] = useState({ clientes: [], tipos: [] });
+  const [filters, setFilters] = useState({
+    evaluadores: [],
+    companias: [],
+    sedes: [],
+  });
 
-  const [clienteFiltro, setClienteFiltro] = useState("todos");
-  const [tipoFiltro, setTipoFiltro] = useState("todos");
+  const [evaluadorFiltro, setEvaluadorFiltro] = useState("todos");
+  const [companiaFiltro, setCompaniaFiltro] = useState("todos");
+  const [sedeFiltro, setSedeFiltro] = useState("todos"); // por ahora NO funcional
 
-  // Para mostrar el resumen solo después de procesar
+  // Para mostrar la parte de resumen sólo luego de procesar
   const [hasProcessed, setHasProcessed] = useState(false);
 
   const handleProcesar = async () => {
     setLoading(true);
     setError("");
     try {
-      const data = await fetchClientesProcess({
+      const data = await fetchHhmmProcess({
         from: fromDate,
         to: toDate,
-        condicion: condicionPago,
       });
 
       setGroups(data.groups || []);
-      setFilters(data.filters || { clientes: [], tipos: [] });
-      setClienteFiltro("todos");
-      setTipoFiltro("todos");
-      setHasProcessed(true); // habilita la sección de resumen
+      setFilters(
+        data.filters || { evaluadores: [], companias: [], sedes: [] }
+      );
+
+      setEvaluadorFiltro("todos");
+      setCompaniaFiltro("todos");
+      setSedeFiltro("todos");
+
+      setHasProcessed(true);
     } catch (e) {
       console.error(e);
-      setError("Ocurrió un error al procesar las liquidaciones.");
+      setError("Ocurrió un error al procesar honorarios médicos.");
       setGroups([]);
-      setFilters({ clientes: [], tipos: [] });
-      setHasProcessed(true); // igual la mostramos, pero vacía
+      setFilters({ evaluadores: [], companias: [], sedes: [] });
+      setHasProcessed(true);
     } finally {
       setLoading(false);
     }
   };
 
+  // Aplicar filtros sobre el resultado ya agrupado
   const groupsFiltrados = useMemo(() => {
     return (groups || []).filter((g) => {
-      const okCliente =
-        clienteFiltro === "todos" || g.cliente === clienteFiltro;
-      const okTipo =
-        tipoFiltro === "todos" || g.tipoEvaluacion === tipoFiltro;
-      return okCliente && okTipo;
+      const okEval =
+        evaluadorFiltro === "todos" || g.evaluador === evaluadorFiltro;
+      const okComp =
+        companiaFiltro === "todos" || g.companiaMedica === companiaFiltro;
+
+      // Sede: por ahora la dejamos sin efecto aunque exista el combo
+      const okSede =
+        sedeFiltro === "todos" || g.sede === sedeFiltro || !g.sede;
+
+      return okEval && okComp && okSede;
     });
-  }, [groups, clienteFiltro, tipoFiltro]);
+  }, [groups, evaluadorFiltro, companiaFiltro, sedeFiltro]);
 
   const totalImporte = groupsFiltrados.reduce(
     (acc, g) => acc + (Number(g.importe) || 0),
@@ -67,38 +82,38 @@ export default function Clientes() {
 
   const handleExportar = () => {
     if (!groupsFiltrados.length) {
-      alert("No hay liquidaciones para exportar.");
+      alert("No hay honorarios para exportar.");
       return;
     }
-    // Aquí luego se reemplaza por la llamada real al backend (descarga Excel)
+    // Aquí luego se implementa la exportación real (Excel / PDF)
     alert(
-      `Exportarías ${groupsFiltrados.length} liquidación(es). (Pendiente implementación backend)`
+      `Exportarías ${groupsFiltrados.length} grupo(s) de honorarios. (Pendiente implementación backend)`
     );
   };
 
   return (
     <div className="module-page">
-      {/* IMPORTANTE:
-          Ya NO ponemos el encabezado grande aquí,
-          porque lo muestra el layout de módulos.
+      {/* OJO:
+          El título grande “Honorarios Médicos” ya lo pinta el layout de módulos.
+          Aquí sólo van las secciones de contenido.
       */}
 
-      {/* Layout vertical: primero procesar, luego resumen */}
       <div className="module-sections-vertical">
-        {/* --- Tarjeta: Procesar --- */}
+        {/* --------- PROCESAR (arriba) --------- */}
         <section className="section-card">
-          <h2 className="section-title">Procesar liquidaciones</h2>
+          <h2 className="section-title">Procesar honorarios</h2>
           <p className="section-subtitle">
-            Ingresa un rango de fechas y, opcionalmente, una condición de pago.
+            Ingresa un rango de fechas para calcular los honorarios médicos a partir
+            de las atenciones registradas.
           </p>
 
           <div className="form-grid">
             <div className="form-field">
-              <label htmlFor="desde" className="form-label">
+              <label htmlFor="hhmm-desde" className="form-label">
                 Desde
               </label>
               <input
-                id="desde"
+                id="hhmm-desde"
                 type="date"
                 className="form-input"
                 value={fromDate}
@@ -107,32 +122,16 @@ export default function Clientes() {
             </div>
 
             <div className="form-field">
-              <label htmlFor="hasta" className="form-label">
+              <label htmlFor="hhmm-hasta" className="form-label">
                 Hasta
               </label>
               <input
-                id="hasta"
+                id="hhmm-hasta"
                 type="date"
                 className="form-input"
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
               />
-            </div>
-
-            <div className="form-field">
-              <label htmlFor="condicion" className="form-label">
-                Condición de pago
-              </label>
-              <select
-                id="condicion"
-                className="form-select"
-                value={condicionPago}
-                onChange={(e) => setCondicionPago(e.target.value)}
-              >
-                <option value="todas">(Todas)</option>
-                <option value="credito">Crédito</option>
-                <option value="contado">Contado</option>
-              </select>
             </div>
           </div>
 
@@ -148,30 +147,46 @@ export default function Clientes() {
           {error && <p className="text-error mt-2">{error}</p>}
         </section>
 
-        {/* --- Tarjeta: Resumen (solo visible tras procesar) --- */}
+        {/* --------- RESUMEN (abajo, sólo si ya procesó) --------- */}
         {hasProcessed && (
           <section className="section-card">
             <div className="section-header-row">
               <div>
-                <h2 className="section-title">Resumen de liquidaciones</h2>
+                <h2 className="section-title">Resumen de honorarios</h2>
                 <p className="section-subtitle">
-                  Filtra por cliente y tipo de evaluación. Luego puedes
-                  exportar las liquidaciones visibles.
+                  Filtra por evaluador y compañía médica. Desde aquí podrás
+                  exportar los honorarios visibles.
                 </p>
               </div>
             </div>
 
-            {/* Filtros del resumen */}
+            {/* Filtros de resumen */}
             <div className="filters-row">
               <div className="form-field">
-                <label className="form-label">Cliente</label>
+                <label className="form-label">Evaluador</label>
                 <select
                   className="form-select"
-                  value={clienteFiltro}
-                  onChange={(e) => setClienteFiltro(e.target.value)}
+                  value={evaluadorFiltro}
+                  onChange={(e) => setEvaluadorFiltro(e.target.value)}
                 >
                   <option value="todos">(Todos)</option>
-                  {filters.clientes?.map((c) => (
+                  {filters.evaluadores?.map((ev) => (
+                    <option key={ev} value={ev}>
+                      {ev}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-field">
+                <label className="form-label">Compañía médica</label>
+                <select
+                  className="form-select"
+                  value={companiaFiltro}
+                  onChange={(e) => setCompaniaFiltro(e.target.value)}
+                >
+                  <option value="todos">(Todas)</option>
+                  {filters.companias?.map((c) => (
                     <option key={c} value={c}>
                       {c}
                     </option>
@@ -180,16 +195,19 @@ export default function Clientes() {
               </div>
 
               <div className="form-field">
-                <label className="form-label">Tipo de evaluación</label>
+                <label className="form-label">
+                  Sede <span className="form-help">(vista)</span>
+                </label>
                 <select
                   className="form-select"
-                  value={tipoFiltro}
-                  onChange={(e) => setTipoFiltro(e.target.value)}
+                  value={sedeFiltro}
+                  onChange={(e) => setSedeFiltro(e.target.value)}
+                  disabled // por ahora no funcional
                 >
-                  <option value="todos">(Todos)</option>
-                  {filters.tipos?.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
+                  <option value="todos">(Todas)</option>
+                  {filters.sedes?.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
                     </option>
                   ))}
                 </select>
@@ -202,9 +220,9 @@ export default function Clientes() {
                 <thead>
                   <tr>
                     <th>Fecha inicio</th>
-                    <th>Cliente</th>
-                    <th>Unidad de producción</th>
-                    <th>Tipo evaluación</th>
+                    <th>Evaluador</th>
+                    <th>Compañía médica</th>
+                    <th>Sede</th>
                     <th style={{ textAlign: "right" }}>Importe</th>
                   </tr>
                 </thead>
@@ -214,16 +232,16 @@ export default function Clientes() {
                       <td colSpan={5} className="table-empty">
                         {loading
                           ? "Procesando..."
-                          : "No hay liquidaciones para los filtros seleccionados."}
+                          : "No hay honorarios para los filtros seleccionados."}
                       </td>
                     </tr>
                   ) : (
                     groupsFiltrados.map((g) => (
                       <tr key={g.id}>
                         <td>{g.fechaInicioMin}</td>
-                        <td>{g.cliente}</td>
-                        <td>{g.unidadProduccion}</td>
-                        <td>{g.tipoEvaluacion}</td>
+                        <td>{g.evaluador}</td>
+                        <td>{g.companiaMedica}</td>
+                        <td>{g.sede || "-"}</td>
                         <td style={{ textAlign: "right" }}>
                           {Number(g.importe || 0).toLocaleString("es-PE", {
                             minimumFractionDigits: 2,
@@ -237,7 +255,7 @@ export default function Clientes() {
               </table>
             </div>
 
-            {/* Pie de resumen: total + botón exportar */}
+            {/* Pie: totales + exportar */}
             <div className="summary-footer">
               <div className="summary-totals">
                 <span className="summary-label">Total importe mostrado:</span>
@@ -255,7 +273,7 @@ export default function Clientes() {
                 onClick={handleExportar}
                 disabled={!groupsFiltrados.length}
               >
-                Exportar liquidaciones visibles
+                Exportar honorarios visibles
               </button>
             </div>
           </section>

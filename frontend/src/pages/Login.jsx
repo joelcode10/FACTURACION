@@ -1,35 +1,64 @@
+// src/pages/Login.jsx
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 export default function Login() {
+  const [user, setUser] = useState("admin@botinteligent.local");
+  const [pass, setPass] = useState("123456");
   const navigate = useNavigate();
 
-  const ingresar = () => navigate("/menu");
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    // Por ahora sin validación real
+    navigate("/menu");
+  };
 
-  return {
-    /* Hero centrado, moderno */
-  } && (
-    <div className="hero">
-      <div className="card card-sm" style={{ textAlign: "center" }}>
-        <div className="brand" style={{ justifyContent: "center" }}>
-          <div className="logo">CB</div>
+  return (
+    <div className="login-page">
+      <div className="login-card">
+        {/* Encabezado */}
+        <div className="login-header">
+          <div className="login-logo">CBMEDIC</div>
           <div>
-            <h1 className="title" style={{ marginBottom: 2 }}>
-              Sistema de Liquidación para Facturación
-            </h1>
-            <div className="subtitle">CBMEDIC · Control y gestión</div>
+            <h1 className="login-title">Sistema de Liquidación para Facturación</h1>
+            <div className="login-subtitle">Control y gestión de facturación y honorarios</div>
           </div>
         </div>
 
-        <div className="form-grid" style={{ marginTop: 16 }}>
-          <label>Usuario</label>
-          <input type="text" placeholder="usuario" />
-          <label>Contraseña</label>
-          <input type="password" placeholder="********" />
-        </div>
+        {/* Formulario */}
+        <form className="login-form" onSubmit={handleSubmit}>
+          <div className="login-field">
+            <label className="login-label">Usuario</label>
+            <input
+              className="login-input"
+              type="email"
+              value={user}
+              onChange={(e) => setUser(e.target.value)}
+              placeholder="usuario@empresa.com"
+            />
+          </div>
 
-        <button className="btn btn-primary" onClick={ingresar} style={{ width: "100%", marginTop: 10 }}>
-          Ingresar
-        </button>
+          <div className="login-field">
+            <label className="login-label">Contraseña</label>
+            <input
+              className="login-input"
+              type="password"
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+              placeholder="********"
+            />
+          </div>
+
+          <div className="login-actions">
+            <button type="submit" className="btn-primary" style={{ width: "100%" }}>
+              Ingresar
+            </button>
+          </div>
+
+          <div className="login-footer">
+            ¿Olvidaste tu contraseña? <a href="#">Recuperar</a>
+          </div>
+        </form>
       </div>
     </div>
   );

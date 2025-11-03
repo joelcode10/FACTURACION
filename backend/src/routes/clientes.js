@@ -1,6 +1,6 @@
 // backend/src/routes/clientes.js
 import express from "express";
-import fs from "fs";
+import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -8,13 +8,14 @@ const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const MOCK_PATH = path.join(__dirname, "../data/mock-clientes.json");
+
 // GET /api/clientes/process  -> devuelve datos mock para probar
 router.get("/process", async (req, res) => {
   try {
-    const mockPath = path.join(__dirname, "../data/mock-clientes.json");
-    const raw = fs.readFileSync(mockPath, "utf8");
-    const json = JSON.parse(raw);
-    res.json(json);
+    const raw = await fs.readFile(MOCK_PATH, "utf8");
+    const data = JSON.parse(raw);
+    res.json(data);
   } catch (err) {
     console.error("Error leyendo mock-clientes.json:", err);
     res.status(500).json({ error: "No se pudo leer mock-clientes.json" });
@@ -25,7 +26,8 @@ router.get("/process", async (req, res) => {
 router.post("/export", async (req, res) => {
   try {
     const { selectedIds = [] } = req.body || {};
-    console.log("Exportando grupos:", selectedIds);
+    console.log("Exportando grupos (mock):", selectedIds);
+    // aquí más adelante harás la export real a Excel / SP, etc.
     res.json({ ok: true });
   } catch (err) {
     console.error("Error en export:", err);

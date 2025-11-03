@@ -1,4 +1,9 @@
-import { Router } from 'express'
-const r = Router()
-r.get('/', (req, res) => res.json({ ok: true, ts: Date.now() }))
-export default r
+// backend/src/routes/health.js
+import { Router } from "express";
+const router = Router();
+
+router.get("/", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
+export default router;

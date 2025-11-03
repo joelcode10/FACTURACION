@@ -1,26 +1,23 @@
-// src/App.jsx
-import { Routes, Route, Link, Navigate } from "react-router-dom";
+// frontend/src/App.jsx
+import { Routes, Route, Navigate } from "react-router-dom";
+import LoginPage from "./pages/Login.jsx";
+import MenuPage from "./pages/Menu.jsx";
 import ClientesPage from "./pages/Clientes.jsx";
-
-function Home() {
-  return (
-    <div className="container">
-      <h1>Sistema de Liquidaciones</h1>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-        <Link to="/clientes" className="card">Liquidación de Clientes →</Link>
-        <div className="card" style={{ opacity: 0.6 }}>HHMM (próx.)</div>
-        <div className="card" style={{ opacity: 0.6 }}>Auditorías (próx.)</div>
-      </div>
-    </div>
-  );
-}
+import CierrePage from "./pages/Cierre.jsx";
+import HhmmPage from "./pages/Hhmm.jsx"; // <--- nuevo
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Home />} />
-      <Route path="/clientes" element={<ClientesPage />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <div className="app-shell">
+      <Routes>
+        <Route path="/" element={<LoginPage />} />
+        <Route path="/menu" element={<MenuPage />} />
+        <Route path="/clientes" element={<ClientesPage />} />
+        <Route path="/hhmm" element={<HhmmPage />} /> {/* nuevo módulo */}
+        <Route path="/cierre" element={<CierrePage />} />
+        {/* redirección por defecto */}
+        <Route path="*" element={<Navigate to="/" />} />
+      </Routes>
+    </div>
   );
 }

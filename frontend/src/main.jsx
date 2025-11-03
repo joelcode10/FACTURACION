@@ -1,9 +1,9 @@
-// src/main.jsx
+// frontend/src/main.jsx
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
-import "./index.css"; // usa el que tengas; si usas globals.css cambia esta línea
+import "./styles/index.css";   // 👈 MUY IMPORTANTE: ruta correcta
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

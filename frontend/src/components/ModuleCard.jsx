@@ -1,12 +1,12 @@
-export default function ModuleCard({ title, description, onClick }) {
+// frontend/src/components/ModuleCard.jsx
+export default function ModuleCard({ title, description, icon, iconClass, onClick }) {
   return (
-    <button className="module-card" onClick={onClick}>
-      <div className="module-icon">📄</div>
+    <div className="module-card" onClick={onClick}>
+      <div className={`module-icon ${iconClass || ""}`}>{icon}</div>
       <div className="module-body">
-        <h3>{title}</h3>
-        <p>{description}</p>
+        <h3 className="module-title">{title}</h3>
+        <p className="module-desc">{description}</p>
       </div>
-      <div className="module-arrow">→</div>
-    </button>
+    </div>
   );
 }
