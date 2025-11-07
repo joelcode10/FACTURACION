@@ -1,0 +1,15 @@
+[
+  {
+    "id": "ccacf10a-8e4e-4809-ac1c-b3dc9ef365f1",
+    "nombre": "joelinton",
+    "email": "joelrolandoqr@gmail.com",
+    "rol": "ADMIN",
+    "estado": "PENDIENTE",
+    "passwordHash": null,
+    "inviteToken": "bcc46f60f36625019a986998e9adc796b62d334841f1b3d023c3eec0efc694fa",
+    "inviteExpiresAt": null,
+    "creadoEn": "2025-11-05T16:46:29.168Z",
+    "invitadoEn": "2025-11-05T16:46:29.168Z",
+    "ultimoLogin": null
+  }
+]

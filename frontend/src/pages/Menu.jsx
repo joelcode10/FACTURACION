@@ -1,110 +1,147 @@
-// src/pages/Menu.jsx
-import React, { useState } from "react";
+// frontend/src/pages/Menu.jsx
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
-// Importa los módulos reales
 import Clientes from "./Clientes.jsx";
 import Hhmm from "./Hhmm.jsx";
-import Cierre from "./Cierre.jsx";
+import Auditorias from "./Auditorias.jsx";
+import Mantenimiento from "./Mantenimiento.jsx";
+import Valorizar from "./Valorizar.jsx";
+import Usuarios from "./Usuarios.jsx";
 
 const MODULES = [
   {
     id: "clientes",
-    short: "L",
-    iconClass: "lc",
     title: "Liquidación de Clientes",
-    subtitle: "Procesar, filtrar y exportar liquidaciones.",
+    subtitle: "Procesar y exportar liquidaciones",
+    iconClass: "lc",
   },
   {
     id: "hhmm",
-    short: "H",
-    iconClass: "hhmm",
     title: "Honorarios Médicos",
-    subtitle: "Cálculo y consolidado de HH.MM.",
+    subtitle: "Cálculo de pagos a médicos",
+    iconClass: "hhmm",
   },
   {
     id: "auditorias",
-    short: "A",
-    iconClass: "aud",
     title: "Auditorías",
-    subtitle: "Control y liquidación por auditor.",
+    subtitle: "Control de auditorías médicas",
+    iconClass: "aud",
   },
   {
     id: "mantenimiento",
-    short: "M",
-    iconClass: "mant",
     title: "Mantenimiento HHMM",
-    subtitle: "Configurar costos y paquetes.",
+    subtitle: "Configuración de costos y paquetes",
+    iconClass: "mant",
   },
   {
     id: "valorizar",
-    short: "V",
+    title: "Valorizar Facturación",
+    subtitle: "Asignar comprobantes a liquidaciones",
     iconClass: "val",
-    title: "Valorizar",
-    subtitle: "Asignar comprobantes y exportar.",
   },
   {
-    id: "cierre",
-    short: "RC",
+    id: "usuarios",
+    title: "Usuarios y Accesos",
+    subtitle: "Invitaciones, roles y accesos",
     iconClass: "rc",
-    title: "Reporte de Cierre",
-    subtitle: "Consolida estado diario con comprobantes.",
   },
 ];
 
-export default function Menu() {
-  const [activeModule, setActiveModule] = useState("clientes");
+// Qué módulos ve cada rol
+function modulesForRole(rol) {
+  switch (rol) {
+    case "FACT1":
+      // solo Liquidación de Clientes y Valorizar
+      return MODULES.filter((m) => ["clientes", "valorizar"].includes(m.id));
+
+    case "FACT2":
+      // HHMM, Auditorías y Mantenimiento
+      return MODULES.filter((m) =>
+        ["hhmm", "auditorias", "mantenimiento"].includes(m.id)
+      );
+
+    case "READONLY":
+      // Todo menos Mantenimiento y Usuarios
+      return MODULES.filter(
+        (m) => !["mantenimiento", "usuarios"].includes(m.id)
+      );
+
+    case "ADMIN":
+    default:
+      // Admin ve todo
+      return MODULES;
+  }
+}
+
+function getRolLabel(rol) {
+  switch (rol) {
+    case "ADMIN":
+      return "Administrador";
+    case "FACT1":
+      return "Facturación 1";
+    case "FACT2":
+      return "Facturación 2";
+    case "READONLY":
+      return "Solo lectura";
+    default:
+      return rol || "Sin rol";
+  }
+}
+
+export default function Menu({ user, onLogout }) {
+  const [selectedModule, setSelectedModule] = useState("clientes");
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    // Por ahora solo regresamos al login
-    navigate("/");
+  const displayName = user?.nombre || user?.email || "Usuario";
+  const rolLabel = getRolLabel(user?.rol);
+  const initials = (displayName || "U")
+    .split(" ")
+    .map((p) => p[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  // módulos visibles según rol
+  const visibleModules = modulesForRole(user?.rol);
+
+  // si cambia el rol o la lista de módulos, asegurar módulo seleccionado válido
+  useEffect(() => {
+    if (!visibleModules.length) {
+      setSelectedModule(null);
+      return;
+    }
+    if (!visibleModules.find((m) => m.id === selectedModule)) {
+      setSelectedModule(visibleModules[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.rol, JSON.stringify(visibleModules)]);
+
+  const handleLogoutClick = () => {
+    localStorage.removeItem("authUser");
+    if (typeof onLogout === "function") {
+      onLogout();
+    }
+    navigate("/login", { replace: true });
   };
 
-  const renderContent = () => {
-    switch (activeModule) {
+  const renderModuleContent = () => {
+    switch (selectedModule) {
       case "clientes":
-        return <Clientes />;
+        return <Clientes user={user} />;
       case "hhmm":
-        return <Hhmm />;
-      case "cierre":
-        return <Cierre />;
+        return <Hhmm user={user} />;
       case "auditorias":
-        return (
-          <>
-            <h1>Auditorías</h1>
-            <p className="lead">
-              Módulo de auditorías (en construcción).
-            </p>
-          </>
-        );
+        return <Auditorias user={user} />;
       case "mantenimiento":
-        return (
-          <>
-            <h1>Mantenimiento HHMM</h1>
-            <p className="lead">
-              Configuración de costos y paquetes para honorarios médicos
-              (en construcción).
-            </p>
-          </>
-        );
+        return <Mantenimiento user={user} />;
       case "valorizar":
-        return (
-          <>
-            <h1>Valorizar</h1>
-            <p className="lead">
-              Asignación de comprobantes a liquidaciones procesadas
-              (en construcción).
-            </p>
-          </>
-        );
+        return <Valorizar user={user} />;
+      case "usuarios":
+        return <Usuarios user={user} />;
       default:
-        return (
-          <>
-            <h1>Módulo no encontrado</h1>
-            <p className="lead">Selecciona un módulo de la barra izquierda.</p>
-          </>
-        );
+        return <div>Selecciona un módulo en la izquierda.</div>;
     }
   };
 
@@ -113,53 +150,74 @@ export default function Menu() {
       {/* HEADER SUPERIOR */}
       <header className="app-header">
         <div className="app-header-left">
-          <div className="app-logo-circle">CB</div>
+          <div className="app-logo-circle">IM</div>
           <div>
             <div className="app-header-title">
-              Sistema de Liquidación para Facturación
+              Sistema de Facturación Ocupacional
             </div>
             <div className="app-header-subtitle">
-              CBMEDIC · Control y gestión
+              CBMEDIC · IntegraMédica · Liquidaciones y Honorarios
             </div>
           </div>
         </div>
+
         <div className="app-header-right">
-          <button type="button" onClick={handleLogout}>
-            Cerrar sesión
-          </button>
+          <div className="user-menu">
+            <button
+              type="button"
+              className="user-chip"
+              onClick={() => setUserMenuOpen((prev) => !prev)}
+            >
+              <div className="user-avatar">{initials}</div>
+              <div className="user-info">
+                <div className="user-name">{displayName}</div>
+                <div className="user-role">{rolLabel}</div>
+              </div>
+              <span className="user-chevron">▾</span>
+            </button>
+
+            {userMenuOpen && (
+              <div className="user-dropdown">
+                <button
+                  type="button"
+                  className="user-dropdown-item"
+                  onClick={handleLogoutClick}
+                >
+                  Cerrar sesión
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
       {/* CUERPO: SIDEBAR + CONTENIDO */}
       <main className="app-main">
-        {/* SIDEBAR DE MÓDULOS */}
+        {/* Sidebar de módulos */}
         <aside className="modules-sidebar">
           <div className="modules-card">
             <h2 className="modules-title">Módulos</h2>
             <p className="modules-subtitle">
-              Selecciona un módulo para trabajar.  
-              El contenido se mostrará a la derecha.
+              Elige un módulo para gestionar información.
             </p>
 
             <div className="module-list">
-              {MODULES.map((m) => (
+              {visibleModules.map((m) => (
                 <button
                   key={m.id}
                   type="button"
                   className={
                     "module-card" +
-                    (activeModule === m.id ? " selected" : "")
+                    (selectedModule === m.id ? " selected" : "")
                   }
-                  onClick={() => setActiveModule(m.id)}
+                  onClick={() => setSelectedModule(m.id)}
                 >
                   <div className={`module-icon ${m.iconClass}`}>
-                    {m.short}
+                    {m.title.charAt(0)}
                   </div>
                   <div>
                     <div className="module-info-title">{m.title}</div>
-                    <div className="module-info-subtitle">
-                      {m.subtitle}
-                    </div>
+                    <div className="module-info-subtitle">{m.subtitle}</div>
                   </div>
                 </button>
               ))}
@@ -167,8 +225,8 @@ export default function Menu() {
           </div>
         </aside>
 
-        {/* CONTENIDO DEL MÓDULO SELECCIONADO */}
-        <section className="module-content">{renderContent()}</section>
+        {/* Contenido del módulo seleccionado */}
+        <section className="module-content">{renderModuleContent()}</section>
       </main>
     </div>
   );

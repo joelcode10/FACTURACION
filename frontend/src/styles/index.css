@@ -533,3 +533,413 @@ button {
   flex-direction: column;
   gap: 24px;
 }
+.module-icon.usr {
+  background: #f97316; /* naranja, por ejemplo */
+}
+/* ====== LOGIN REESTRUCTURADO ====== */
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at top left, #eef2ff, #e5e7eb);
+  padding: 1.5rem;
+}
+
+.login-card {
+  width: 640px;
+  max-width: 95%;
+  background: #ffffff;
+  border-radius: 18px;
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.25);
+  padding: 2.5rem 3rem 3rem;
+  text-align: center;
+}
+
+/* Marca superior */
+.brand {
+  font-size: 1.6rem;
+  font-weight: 800;
+  margin-bottom: 1rem;
+}
+
+.brand-main {
+  color: #2563eb;
+}
+
+.brand-highlight {
+  color: #111827;
+}
+
+/* Título del sistema */
+.login-system {
+  margin-bottom: 2rem;
+}
+
+.login-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0;
+  color: #111827;
+}
+
+/* Formulario centrado */
+.centered-form {
+  margin: 0 auto;
+  width: 85%;
+  max-width: 420px;
+  text-align: left;
+}
+
+.login-field {
+  margin-bottom: 1rem;
+}
+
+.login-label {
+  font-size: 0.9rem;
+  color: #374151;
+  margin-bottom: 0.3rem;
+  display: block;
+}
+
+.login-input {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  font-size: 0.95rem;
+}
+
+.login-input:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+  background: #ffffff;
+}
+
+.login-error {
+  color: #b91c1c;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+
+/* Footer */
+.login-footer {
+  margin-top: 1.25rem;
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+.login-footer a {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+/* ====== MENÚ DE USUARIO (HEADER) ====== */
+.user-menu {
+  position: relative;
+}
+
+/* Chip de usuario (avatar + nombre + rol) */
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: #111827;
+  color: #ffffff;
+  border: none;
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.4);
+}
+
+.user-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: #2563eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.user-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.user-role {
+  font-size: 0.7rem;
+  color: #d1d5db;
+  line-height: 1.1;
+}
+
+.user-chevron {
+  font-size: 0.7rem;
+  margin-left: 0.15rem;
+}
+
+/* Dropdown: tarjeta limpia debajo del chip */
+.user-dropdown {
+  position: absolute;
+  top: 115%;
+  right: 0;
+  min-width: 170px;
+  background: #0b1120;              /* un poco más oscuro que el header */
+  border-radius: 14px;
+  padding: 6px 0;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.6);
+  z-index: 50;
+}
+
+/* Cada opción del menú */
+.user-dropdown-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: #e5e7eb;
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-dropdown-item:hover {
+  background: rgba(31, 41, 55, 0.9); /* gris oscuro */
+  color: #ffffff;
+}
+
+/* Puedes usar este icono en el futuro si agregas más opciones */
+.user-dropdown-item::before {
+  content: "⏻";
+  font-size: 0.85rem;
+}
+
+
+/* ====== PÁGINA DE USUARIOS ====== */
+
+.users-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.users-card {
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 18px 20px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+}
+
+.users-card--invite {
+  margin-bottom: 4px;
+}
+
+.users-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.users-card-header--list {
+  margin-bottom: 16px;
+}
+
+.users-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.users-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.users-icon--blue {
+  background: #e0edff;
+  color: #2563eb;
+}
+
+.users-icon--outline {
+  border: 1px solid #d1d5db;
+  color: #4b5563;
+  background: #f9fafb;
+}
+
+.users-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.users-subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+/* Formulario de invitación en fila */
+.users-invite-form {
+  display: grid;
+  grid-template-columns: 2fr 2fr 1.5fr auto;
+  gap: 12px;
+}
+
+.users-input,
+.users-select,
+.users-search {
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid #d1d5db;
+  padding: 0 14px;
+  font-size: 0.88rem;
+  outline: none;
+  background: #f9fafb;
+}
+
+.users-input:focus,
+.users-select:focus,
+.users-search:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.4);
+  background: #ffffff;
+}
+
+.users-invite-btn {
+  padding-inline: 24px;
+}
+
+/* Buscador en lista */
+.users-search-wrapper {
+  min-width: 240px;
+}
+
+.users-table td {
+  vertical-align: middle;
+}
+
+/* Celda de usuario (avatar + texto) */
+.users-user-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.users-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: #e0edff;
+  color: #2563eb;
+  font-weight: 700;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.users-user-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.users-user-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.users-user-email {
+  font-size: 0.78rem;
+  color: #6b7280;
+}
+
+/* Badge de estado */
+.users-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.users-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #9ca3af;
+}
+
+.users-badge--activo {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.users-badge--activo .users-badge-dot {
+  background: #22c55e;
+}
+
+.users-badge--pendiente {
+  background: #fef9c3;
+  color: #92400e;
+}
+
+.users-badge--pendiente .users-badge-dot {
+  background: #fbbf24;
+}
+
+.users-badge--cancelado {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.users-badge--cancelado .users-badge-dot {
+  background: #ef4444;
+}
+
+/* Acciones */
+.users-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.users-action-link {
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.users-action-link--danger {
+  color: #b91c1c;
+}

@@ -1,4 +1,5 @@
-import { getPool, sql } from '../db.js';
+import { getPool, sql } from "../util/db.js";
+
 import { config } from '../config.js';
 
 /**

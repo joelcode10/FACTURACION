@@ -1,40 +1,71 @@
-// src/pages/Login.jsx
+// frontend/src/pages/Login.jsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { loginApi } from "../lib/api.js";
 
-export default function Login() {
-  const [user, setUser] = useState("admin@botinteligent.local");
-  const [pass, setPass] = useState("123456");
+export default function Login({ onLogin }) {
+  const [user, setUser] = useState("admin");
+  const [pass, setPass] = useState("admin123");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // Por ahora sin validación real
-    navigate("/menu");
+    setError("");
+
+    if (!user || !pass) {
+      setError("Por favor ingresa usuario y contraseña.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const resp = await loginApi(user, pass); // llama a /api/auth/login
+
+      if (!resp.ok) {
+        setError(resp.message || "Error al iniciar sesión.");
+        return;
+      }
+
+      if (onLogin) {
+        onLogin(resp.user);
+      }
+
+      navigate("/menu");
+    } catch (err) {
+      console.error("Error en login:", err);
+      setError(err.message || "Error al iniciar sesión.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="login-page">
       <div className="login-card">
-        {/* Encabezado */}
+        {/* Marca superior */}
         <div className="login-header">
-          <div className="login-logo">CBMEDIC</div>
-          <div>
-            <h1 className="login-title">Sistema de Liquidación para Facturación</h1>
-            <div className="login-subtitle">Control y gestión de facturación y honorarios</div>
-          </div>
+          <h2 className="brand">
+            <span className="brand-main">IntegraMédica</span>
+          </h2>
         </div>
 
-        {/* Formulario */}
-        <form className="login-form" onSubmit={handleSubmit}>
+        {/* Título del sistema */}
+        <div className="login-system">
+          <h1 className="login-title">SISTEMA DE FACTURACIÓN OCUPACIONAL</h1>
+        </div>
+
+        {/* Formulario centrado */}
+        <form className="login-form centered-form" onSubmit={handleSubmit}>
           <div className="login-field">
             <label className="login-label">Usuario</label>
             <input
               className="login-input"
-              type="email"
+              type="text"
               value={user}
               onChange={(e) => setUser(e.target.value)}
-              placeholder="usuario@empresa.com"
+              placeholder="admin"
             />
           </div>
 
@@ -49,9 +80,16 @@ export default function Login() {
             />
           </div>
 
+          {error && <div className="login-error">{error}</div>}
+
           <div className="login-actions">
-            <button type="submit" className="btn-primary" style={{ width: "100%" }}>
-              Ingresar
+            <button
+              type="submit"
+              className="btn-primary"
+              style={{ width: "100%" }}
+              disabled={loading}
+            >
+              {loading ? "Ingresando..." : "Ingresar"}
             </button>
           </div>
 
