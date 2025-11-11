@@ -12,38 +12,33 @@ import Usuarios from "./Usuarios.jsx";
 const MODULES = [
   {
     id: "clientes",
-    title: "Liquidación de Clientes",
-    subtitle: "Procesar y exportar liquidaciones",
+    title: "Liquidación",
     iconClass: "lc",
   },
   {
     id: "hhmm",
     title: "Honorarios Médicos",
-    subtitle: "Cálculo de pagos a médicos",
     iconClass: "hhmm",
   },
   {
     id: "auditorias",
     title: "Auditorías",
-    subtitle: "Control de auditorías médicas",
+
     iconClass: "aud",
   },
   {
     id: "mantenimiento",
-    title: "Mantenimiento HHMM",
-    subtitle: "Configuración de costos y paquetes",
+    title: "Mantenimiento",
     iconClass: "mant",
   },
   {
     id: "valorizar",
-    title: "Valorizar Facturación",
-    subtitle: "Asignar comprobantes a liquidaciones",
+    title: "Valorizar",
     iconClass: "val",
   },
   {
     id: "usuarios",
     title: "Usuarios y Accesos",
-    subtitle: "Invitaciones, roles y accesos",
     iconClass: "rc",
   },
 ];
@@ -150,13 +145,13 @@ export default function Menu({ user, onLogout }) {
       {/* HEADER SUPERIOR */}
       <header className="app-header">
         <div className="app-header-left">
-          <div className="app-logo-circle">IM</div>
+          <div className="app-logo-circle">SFO</div>
           <div>
             <div className="app-header-title">
               Sistema de Facturación Ocupacional
             </div>
             <div className="app-header-subtitle">
-              CBMEDIC · IntegraMédica · Liquidaciones y Honorarios
+              Facturación - SO
             </div>
           </div>
         </div>
@@ -198,8 +193,8 @@ export default function Menu({ user, onLogout }) {
           <div className="modules-card">
             <h2 className="modules-title">Módulos</h2>
             <p className="modules-subtitle">
-              Elige un módulo para gestionar información.
-            </p>
+              
+            </p>                                                                                                                                                                                                           
 
             <div className="module-list">
               {visibleModules.map((m) => (

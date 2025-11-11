@@ -64,10 +64,6 @@ export default function InviteAccept() {
           <div className="login-logo">IntegraMédica</div>
           <div>
             <h1 className="login-title">Activar cuenta</h1>
-            <div className="login-subtitle">
-              Crea tu contraseña para ingresar al Sistema de Liquidación para
-              Facturación.
-            </div>
           </div>
         </div>
 
