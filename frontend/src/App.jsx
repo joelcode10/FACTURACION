@@ -6,40 +6,45 @@ import Login from "./pages/Login.jsx";
 import Menu from "./pages/Menu.jsx";
 import InviteAccept from "./pages/InviteAccept.jsx";
 import Usuarios from "./pages/Usuarios.jsx";
+// import Cierre from "./pages/Cierre.jsx"; // si lo usas
 
 function App() {
-  const [user, setUser] = useState(null);
+  // 🔹 Hidratamos el usuario directamente desde localStorage en el primer render
+  const [user, setUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem("authUser");
+      if (!saved) return null;
+      const parsed = JSON.parse(saved);
+      // Puedes ajustar esta validación si tu objeto user tiene otras propiedades
+      if (parsed && parsed.email) {
+        return parsed;
+      }
+      return null;
+    } catch (e) {
+      console.error("Error leyendo authUser de localStorage:", e);
+      return null;
+    }
+  });
 
   const handleLogin = (u) => {
     setUser(u);
+    localStorage.setItem("authUser", JSON.stringify(u));
   };
 
   const handleLogout = () => {
     setUser(null);
+    localStorage.removeItem("authUser");
   };
 
   const isAuthenticated = !!user;
 
   return (
     <Routes>
-      {/* Redirección por defecto:
-          - Si está logueado => /menu
-          - Si no => /login */}
-      <Route
-        path="/"
-        element={
-          <Navigate
-            to={isAuthenticated ? "/menu" : "/login"}
-            replace
-          />
-        }
-      />
+      {/* Redirección por defecto */}
+      <Route path="/" element={<Navigate to="/login" replace />} />
 
       {/* Login */}
-      <Route
-        path="/login"
-        element={<Login onLogin={handleLogin} />}
-      />
+      <Route path="/login" element={<Login onLogin={handleLogin} />} />
 
       {/* Menú principal (layout con módulos) */}
       <Route
@@ -65,8 +70,22 @@ function App() {
         }
       />
 
-      {/* Pantalla para completar invitación: /invitar/:token */}
+      {/* Completar invitación */}
       <Route path="/invitar/:token" element={<InviteAccept />} />
+
+      {/* Ejemplo Cierre, si lo sigues usando */}
+      {/*
+      <Route
+        path="/cierre"
+        element={
+          isAuthenticated ? (
+            <Cierre user={user} onLogout={handleLogout} />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+      */}
 
       {/* Cualquier otra ruta -> login */}
       <Route path="*" element={<Navigate to="/login" replace />} />
