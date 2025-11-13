@@ -9,29 +9,17 @@ async function request(path, options = {}) {
   });
 
   const text = await res.text().catch(() => "");
-
   if (!res.ok) {
     let message = text || `Error HTTP ${res.status}`;
-    try {
-      const json = JSON.parse(text);
-      if (json.message) message = json.message;
-      if (json.debug) message += ` (${json.debug})`;
-    } catch {
-      // texto plano, lo dejamos como está
-    }
+    try { const j = JSON.parse(text); if (j.message) message = j.message; } catch {}
     throw new Error(message);
   }
-
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
-    return {};
-  }
+  try { return text ? JSON.parse(text) : {}; } catch { return {}; }
 }
 
 /** 🔐 Login */
 export async function loginApi(username, password) {
-  // El backend acepta "email" o "username"
+  // El backend espera { email, password }
   return request("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email: username, password }),
@@ -49,12 +37,22 @@ export async function fetchClientesProcess({ from, to, condicionPago }) {
   return request(`/api/clientes/process?${params.toString()}`);
 }
 
-/** 🩺 Honorarios médicos */
+/** 🩺 Honorarios médicos (HHMM) */
 export async function fetchHhmmProcess({ from, to }) {
   const params = new URLSearchParams();
   if (from) params.append("from", from);
   if (to) params.append("to", to);
-  return request(`/api/hhmm/process?${params.toString()}`);
+  try {
+    return await request(`/api/hhmm/process?${params.toString()}`);
+  } catch {
+    return {
+      ok: true,
+      groups: [],
+      detailsByGroupId: {},
+      filters: { medicos: [], tipos: [] },
+      note: "HHMM aún no implementado en backend, usando datos vacíos.",
+    };
+  }
 }
 
 /** 🧾 Auditorías */
@@ -73,38 +71,49 @@ export async function postLog(payload) {
   });
 }
 
-/** 👤 Usuarios: listado */
-export async function fetchUsers() {
-  return request("/api/users");
-}
-
-/** 👤 Usuarios: invitar */
+/** 👤 Usuarios */
+export async function fetchUsers() { return request("/api/users"); }
 export async function inviteUser({ nombre, email, rol }) {
   return request("/api/users/invite", {
     method: "POST",
     body: JSON.stringify({ nombre, email, rol }),
   });
 }
-
-/** 👤 Usuarios: completar invitación */
 export async function completeInvite({ token, password }) {
   return request("/api/users/complete", {
     method: "POST",
     body: JSON.stringify({ token, password }),
   });
 }
-
-/** 👤 Usuarios: cancelar invitación */
 export async function cancelInvite(userId) {
   return request("/api/users/cancel-invite", {
     method: "POST",
     body: JSON.stringify({ userId }),
   });
 }
-
-/** 👤 Usuarios: eliminar usuario */
 export async function deleteUser(userId) {
-  return request(`/api/users/${userId}`, {
-    method: "DELETE",
+  return request(`/api/users/${userId}`, { method: "DELETE" });
+}
+
+/** ✅ Guardar exclusiones (No liquidar) — versión definitiva */
+export async function saveExclusions(items) {
+  return request(`/api/clientes/exclusions`, {
+    method: "POST",
+    body: JSON.stringify({ items }),
   });
+}
+
+/** 📤 Exportar Excel de liquidaciones seleccionadas */
+export async function exportLiquidaciones({ from, to, condicionPago, selectedIds }) {
+  const url = `${API_BASE}/api/clientes/export`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ from, to, condicionPago, selectedIds }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(t || `Error HTTP ${res.status}`);
+  }
+  return await res.blob();
 }

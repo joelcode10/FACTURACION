@@ -943,3 +943,52 @@ button {
 .users-action-link--danger {
   color: #b91c1c;
 }
+/* ===== Modal ===== */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+}
+.modal-card {
+  width: 960px; max-width: 95%;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 18px 40px rgba(15,23,42,0.25);
+  padding: 16px 18px;
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.row-excluded td {
+  opacity: 0.55;
+}
+/* Ancho completo para la tarjeta superior */
+.section-card-wide {
+  max-width: 100%;
+}
+
+/* Evitar saltos de línea en celdas (fecha) */
+.nowrap {
+  white-space: nowrap;
+}
+
+/* Botón compacto para acciones en tabla */
+.btn-sm {
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+}
+
+/* Opcional: reduce un poco el radio del botón grande por consistencia */
+.simple-table td .btn-primary,
+.simple-table th .btn-primary {
+  line-height: 1.1;
+}
+.filter-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}

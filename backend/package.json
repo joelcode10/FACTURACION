@@ -9,6 +9,7 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2",
     "dotenv": "^16",
+    "exceljs": "^4.4.0",
     "express": "^4",
     "jsonwebtoken": "^9.0.2",
     "mssql": "^12.1.0",

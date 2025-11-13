@@ -1,75 +1,60 @@
 // backend/src/util/db.js
 import sql from "mssql";
-import dotenv from "dotenv";
 
-dotenv.config();
-
-/**      
- * Config BD Local (FacturacionCBMedic)
- */
-const localConfig = {
-  user: process.env.SQL_USER,
-  password: process.env.SQL_PASSWORD,
-  server: process.env.SQL_SERVER,
-  database: process.env.SQL_DATABASE,
+// 🧩 Configuración base común
+const baseConfig = {
   options: {
     encrypt: false,
     trustServerCertificate: true,
   },
-};
-
-/**
- * Config BD CBMEDIC
- */
-const cbmedicConfig = {
-  user: process.env.SQL_CBMEDIC_USER,
-  password: process.env.SQL_CBMEDIC_PASSWORD,
-  server: process.env.SQL_CBMEDIC_SERVER,
-  database: process.env.SQL_CBMEDIC_DATABASE,
-  options: {
-    encrypt: false,
-    trustServerCertificate: true,
+  pool: {
+    max: 10,
+    min: 0,
+    idleTimeoutMillis: 30000,
   },
 };
 
-let localPoolPromise = null;
-let cbmedicPoolPromise = null;
+// 💾 Conexión principal: Facturación (tu base local)
+const configFacturacion = {
+  ...baseConfig,
+  user: process.env.SQL_USER || "sa",
+  password: process.env.SQL_PASSWORD || "joelsql",
+  server: process.env.SQL_SERVER || "LAPTOP-TVE7FV9J",
+  database: process.env.SQL_DATABASE || "FacturacionCBMedic",
+};
 
-/**
- * Pool para tu BD local de facturación
- * (Usuarios, roles, mantenimiento, logs, etc.)
- */
+// 💾 Conexión secundaria: CBMEDIC (servidor hospital)
+const configCbmedic = {
+  ...baseConfig,
+  user: process.env.SQL_CBMEDIC_USER || "sa",
+  password: process.env.SQL_CBMEDIC_PASSWORD || "#Integramedica2023",
+  server: process.env.SQL_CBMEDIC_SERVER || "10.33.10.230",
+  database: process.env.SQL_CBMEDIC_DATABASE || "cbmedic",
+};
+
+// 🧠 Caches de conexión
+let poolFacturacion = null;
+let poolCbmedic = null;
+
+// ======== EXPORTS ========
+
+// 👉 conexión a tu BD local
 export async function getPool() {
-  if (!localPoolPromise) {
-    if (!localConfig.server || !localConfig.database) {
-      throw new Error(
-        `Config SQL local inválida. Revisa SQL_SERVER y SQL_DATABASE en .env (actual: ${process.env.SQL_SERVER}, ${process.env.SQL_DATABASE})`
-      );
-    }
-    localPoolPromise = sql.connect(localConfig);
+  if (!poolFacturacion) {
+    poolFacturacion = await sql.connect(configFacturacion);
+    console.log("✅ Conectado a BD Facturación");
   }
-  return localPoolPromise;
+  return poolFacturacion;
 }
 
-/**
- * Pool para la BD CBMEDIC
- * (Datos clínicos, valorizaciones, etc.)
- */
-export async function getCbmedicPool() {
-  if (!cbmedicPoolPromise) {
-    if (!cbmedicConfig.server || !cbmedicConfig.database) {
-      throw new Error(
-        `Config SQL CBMEDIC inválida. Revisa SQL_CBMEDIC_SERVER y SQL_CBMEDIC_DATABASE en .env (actual: ${process.env.SQL_CBMEDIC_SERVER}, ${process.env.SQL_CBMEDIC_DATABASE})`
-      );
-    }
-    cbmedicPoolPromise = new sql.ConnectionPool(cbmedicConfig)
-      .connect()
-      .catch((err) => {
-        console.error("❌ Error conectando a CBMEDIC:", err);
-        throw err;
-      });
+// 👉 conexión a la BD cbmedic
+export async function getPoolCbmedic() {
+  if (!poolCbmedic) {
+    poolCbmedic = await new sql.ConnectionPool(configCbmedic).connect();
+    console.log("✅ Conectado a BD CBMEDIC");
   }
-  return cbmedicPoolPromise;
+  return poolCbmedic;
 }
 
+// Exporta sql para tipos
 export { sql };
