@@ -6,6 +6,7 @@ import Login from "./pages/Login.jsx";
 import Menu from "./pages/Menu.jsx";
 import InviteAccept from "./pages/InviteAccept.jsx";
 import Usuarios from "./pages/Usuarios.jsx";
+import LiquidacionesClientes from "./pages/LiquidacionesClientes.jsx";
 // import Cierre from "./pages/Cierre.jsx"; // si lo usas
 
 function App() {
@@ -89,6 +90,10 @@ function App() {
 
       {/* Cualquier otra ruta -> login */}
       <Route path="*" element={<Navigate to="/login" replace />} />
+
+      {/* ...tus otras rutas... */}
+      <Route path="/liquidaciones-clientes" element={<LiquidacionesClientes />} />
+
     </Routes>
   );
 }

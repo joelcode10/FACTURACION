@@ -1,60 +1,63 @@
 // backend/src/util/db.js
 import sql from "mssql";
 
-// 🧩 Configuración base común
-const baseConfig = {
+// --- Config BD principal (FacturacionCBMedic) ---
+const mainConfig = {
+  user: process.env.SQL_USER,
+  password: process.env.SQL_PASSWORD,
+  server: process.env.SQL_SERVER,      // 10.33.10.230
+  database: process.env.SQL_DATABASE,  // FacturacionCBMedic
   options: {
     encrypt: false,
     trustServerCertificate: true,
   },
-  pool: {
-    max: 10,
-    min: 0,
-    idleTimeoutMillis: 30000,
+  // timeouts (ms)
+  requestTimeout: 300000,      // 5 minutos por si alguna consulta pesada
+  connectionTimeout: 30000,    // 30 s para conectar
+};
+
+// --- Config BD cbmedic (productiva) ---
+const cbmedicConfig = {
+  user: process.env.SQL_CBMEDIC_USER || process.env.SQL_USER,
+  password: process.env.SQL_CBMEDIC_PASSWORD || process.env.SQL_PASSWORD,
+  server: process.env.SQL_CBMEDIC_SERVER,
+  database: process.env.SQL_CBMEDIC_DATABASE,
+  options: {
+    encrypt: false,
+    trustServerCertificate: true,
   },
+  // aquí estaba el problema: subimos el timeout de la consulta
+  requestTimeout: 300000,      // 5 minutos
+  connectionTimeout: 30000,
 };
 
-// 💾 Conexión principal: Facturación (tu base local)
-const configFacturacion = {
-  ...baseConfig,
-  user: process.env.SQL_USER || "sa",
-  password: process.env.SQL_PASSWORD || "joelsql",
-  server: process.env.SQL_SERVER || "LAPTOP-TVE7FV9J",
-  database: process.env.SQL_DATABASE || "FacturacionCBMedic",
-};
+let mainPoolPromise = null;
+let cbmedicPoolPromise = null;
 
-// 💾 Conexión secundaria: CBMEDIC (servidor hospital)
-const configCbmedic = {
-  ...baseConfig,
-  user: process.env.SQL_CBMEDIC_USER || "sa",
-  password: process.env.SQL_CBMEDIC_PASSWORD || "#Integramedica2023",
-  server: process.env.SQL_CBMEDIC_SERVER || "10.33.10.230",
-  database: process.env.SQL_CBMEDIC_DATABASE || "cbmedic",
-};
-
-// 🧠 Caches de conexión
-let poolFacturacion = null;
-let poolCbmedic = null;
-
-// ======== EXPORTS ========
-
-// 👉 conexión a tu BD local
-export async function getPool() {
-  if (!poolFacturacion) {
-    poolFacturacion = await sql.connect(configFacturacion);
-    console.log("✅ Conectado a BD Facturación");
+/** Conexión a FacturacionCBMedic */
+export function getPool() {
+  if (!mainPoolPromise) {
+    console.log(
+      "🔌 Conectando a BD principal:",
+      mainConfig.server,
+      mainConfig.database
+    );
+    mainPoolPromise = sql.connect(mainConfig);
   }
-  return poolFacturacion;
+  return mainPoolPromise;
 }
 
-// 👉 conexión a la BD cbmedic
+/** Conexión a cbmedic */
 export async function getPoolCbmedic() {
-  if (!poolCbmedic) {
-    poolCbmedic = await new sql.ConnectionPool(configCbmedic).connect();
-    console.log("✅ Conectado a BD CBMEDIC");
+  if (!cbmedicPoolPromise) {
+    console.log(
+      "🔌 Conectando a BD CBMEDIC:",
+      cbmedicConfig.server,
+      cbmedicConfig.database
+    );
+    cbmedicPoolPromise = new sql.ConnectionPool(cbmedicConfig).connect();
   }
-  return poolCbmedic;
+  return cbmedicPoolPromise;
 }
 
-// Exporta sql para tipos
 export { sql };

@@ -95,14 +95,21 @@ export async function deleteUser(userId) {
   return request(`/api/users/${userId}`, { method: "DELETE" });
 }
 
-/** ✅ Guardar exclusiones (No liquidar) — versión definitiva */
-export async function saveExclusions(items) {
-  return request(`/api/clientes/exclusions`, {
+/** Guardar "no liquidar" (pendientes) */
+export async function saveExclusions(payload) {
+  // payload = { from, to, condicionPago, items: [...] }
+  return request("/api/clientes/exclusions", {
     method: "POST",
-    body: JSON.stringify({ items }),
+    body: JSON.stringify(payload),
   });
 }
-
+export async function anularPendiente({ nro, documento }) {
+  return await request("/api/clientes/pendientes/anular", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nro, documento }),
+  });
+}
 /** 📤 Exportar Excel de liquidaciones seleccionadas */
 export async function exportLiquidaciones({ from, to, condicionPago, selectedIds }) {
   const url = `${API_BASE}/api/clientes/export`;
@@ -116,4 +123,52 @@ export async function exportLiquidaciones({ from, to, condicionPago, selectedIds
     throw new Error(t || `Error HTTP ${res.status}`);
   }
   return await res.blob();
+}
+export async function fetchDetalleConPendientes(params) {
+  const qs = new URLSearchParams(params);
+  const resp = await request(
+    `/api/clientes/detalle-con-pendientes?${qs.toString()}`
+  );
+  return resp;
+}
+/** 🧾 Registrar liquidación (cabecera + detalle en histórico) */
+export async function liquidarClientes({ from, to, condicionPago, selectedIds, usuario }) {
+  return request("/api/clientes/liquidar", {
+    method: "POST",
+    body: JSON.stringify({
+      from,
+      to,
+      condicionPago,
+      selectedIds,
+      usuario: usuario || null, // por ahora opcional
+    }),
+  });
+}
+/** 📚 Histórico: listar liquidaciones de clientes */
+export async function fetchLiquidaciones({ from, to, condicionPago } = {}) {
+  const params = new URLSearchParams();
+  if (from) params.append("from", from);
+  if (to) params.append("to", to);
+  if (condicionPago && condicionPago !== "TODAS") {
+    params.append("condicionPago", condicionPago);
+  }
+  // Si no hay params, igual llamamos al endpoint sin querystring
+  const qs = params.toString();
+  const path = qs ? `/api/clientes/liquidaciones?${qs}` : `/api/clientes/liquidaciones`;
+  return request(path);
+}
+
+/** 📄 Histórico: detalle de una liquidación específica */
+export async function fetchLiquidacionDetalle(idLiquidacion) {
+  if (!idLiquidacion) {
+    throw new Error("IdLiquidacion es requerido para obtener el detalle.");
+  }
+  return request(`/api/clientes/liquidaciones/${idLiquidacion}`);
+}
+export async function anularLiquidacion(id, usuario) {
+  return request(`/api/clientes/liquidaciones/${id}/anular`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ usuario }),
+  });
 }

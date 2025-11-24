@@ -8,7 +8,7 @@ import Auditorias from "./Auditorias.jsx";
 import Mantenimiento from "./Mantenimiento.jsx";
 import Valorizar from "./Valorizar.jsx";
 import Usuarios from "./Usuarios.jsx";
-
+import LiquidacionesClientes from "./LiquidacionesClientes.jsx";
 const MODULES = [
   {
     id: "clientes",
@@ -40,6 +40,11 @@ const MODULES = [
     id: "usuarios",
     title: "Usuarios y Accesos",
     iconClass: "rc",
+  },
+  {
+    id: "liq_hist",
+    title: "Histórico",
+    iconClass: "hist"   // puedes usar otro icono
   },
 ];
 
@@ -135,6 +140,8 @@ export default function Menu({ user, onLogout }) {
         return <Valorizar user={user} />;
       case "usuarios":
         return <Usuarios user={user} />;
+      case "liq_hist":
+        return <LiquidacionesClientes user={user}/>;
       default:
         return <div>Selecciona un módulo en la izquierda.</div>;
     }
@@ -225,4 +232,5 @@ export default function Menu({ user, onLogout }) {
       </main>
     </div>
   );
+  
 }

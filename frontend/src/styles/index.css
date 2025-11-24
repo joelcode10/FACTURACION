@@ -992,3 +992,71 @@ button {
   gap: 12px;
   align-items: center;
 }
+/* Tarjeta de resumen de liquidación */
+.liq-summary-card {
+  max-width: 1200px;
+  margin: 32px auto;
+  padding: 16px 24px;
+}
+
+/* Tabla dentro del resumen: que ocupe todo pero sin desbordarse raro */
+.liq-summary-table-wrapper {
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+/* Botón Ver detalle un poco más pequeño */
+.liq-btn-detalle {
+  min-width: 110px;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+/* Contenedor de la tabla de resumen */
+.resumen-container {
+  margin-top: 16px;
+}
+
+/* Envoltorio que habilita scroll horizontal */
+.resumen-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+/* La tabla en sí */
+.resumen-table {
+  border-collapse: collapse;
+  width: 100%;
+  /* Evita que cada columna intente ser enorme */
+  table-layout: auto;
+  font-size: 12px;       /* un poco más pequeño */
+}
+
+.resumen-table th,
+.resumen-table td {
+  padding: 6px 8px;      /* menos padding para que no se alargue tanto */
+  white-space: nowrap;   /* cada celda en línea, no salta hacia abajo */
+}
+
+/* Columna "Ver detalle" más estrecha */
+.resumen-table th.ver-detalle-col,
+.resumen-table td.ver-detalle-col {
+  width: 60px;
+  text-align: center;
+}
+
+/* Botón de ver detalle más chico */
+.btn-ver-detalle {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+/* Pie de acciones (totales + exportar) pegado al final, pero sin ensanchar más */
+.resumen-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
