@@ -29,26 +29,25 @@ button {
   background: #2563eb;
   color: #fff;
   border: none;
-  border-radius: 999px;
-  padding: 0.75rem 1.75rem;
-  font-size: 0.95rem;
+  border-radius: 8px; /* Era 999px (muy redondeado) */
+  padding: 0.5rem 1.2rem; /* Era 0.75rem 1.75rem */
+  font-size: 0.85rem; /* Era 0.95rem */
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
-  transition: background 0.15s ease, transform 0.1s ease,
-    box-shadow 0.15s ease;
-}
-
-.btn-primary:hover {
-  background: #1d4ed8;
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.3);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.2); /* Sombra más sutil */
+  transition: background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
 }
 
 .btn-primary:active {
   transform: translateY(0);
-  box-shadow: 0 3px 8px rgba(37, 99, 235, 0.2);
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.15);
 }
+.btn-primary:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 
 /* ====== LOGIN PAGE (PANTALLA COMPLETA) ====== */
 .login-page {
@@ -144,12 +143,13 @@ button {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background: #f3f4f6; /* Fondo claro para el contenido */
 }
 
 /* Header fijo arriba */
 .app-header {
-  height: 64px;
-  padding: 0 2.5rem;
+  height: 56px; /* Era 64px */
+  padding: 0 2rem; /* Era 0 2.5rem */
   background: #ffffff;
   border-bottom: 1px solid #e5e7eb;
   display: flex;
@@ -164,8 +164,8 @@ button {
 }
 
 .app-logo-circle {
-  width: 32px;
-  height: 32px;
+  width: 28px; /* Era 32px */
+  height: 28px;
   border-radius: 999px;
   background: #2563eb;
   color: #ffffff;
@@ -173,16 +173,16 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.95rem;
+  font-size: 0.85rem; /* Era 0.95rem */
 }
 
 .app-header-title {
-  font-size: 1.15rem;
+  font-size: 1rem; /* Era 1.15rem */
   font-weight: 650;
 }
 
 .app-header-subtitle {
-  font-size: 0.8rem;
+  font-size: 0.75rem; /* Era 0.8rem */
   color: #6b7280;
 }
 
@@ -200,82 +200,169 @@ button {
 .app-main {
   flex: 1;
   display: flex;
-  padding: 1.5rem 2.5rem 2rem;
-  gap: 1.5rem;
+  padding: 0; /* Eliminamos padding para que el sidebar llegue al borde */
+  gap: 0; /* Sin gap */
+  background: #f3f4f6;
 }
 
-/* ====== SIDEBAR DE MÓDULOS ====== */
+/* ====== SIDEBAR DE MÓDULOS (MÁS COMPACTO) ====== */
 .modules-sidebar {
-  width: 260px;
+  width: 140px; /* Reducido de 180px a 140px */
   flex-shrink: 0;
+  background: #0f1729;
+  padding: 0.5rem 0;
+  border-radius: 0;
 }
 
 .modules-card {
-  background: #ffffff;
-  border-radius: 18px;
-  padding: 1.25rem 1.1rem 1.5rem;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
 }
 
 .modules-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  margin: 0;
+  display: none;
 }
 
 .modules-subtitle {
-  font-size: 0.85rem;
-  color: #6b7280;
-  margin-top: 0.25rem;
-  margin-bottom: 1rem;
+  display: none;
 }
 
-/* ====== TARJETAS DE MÓDULO ====== */
+/* ====== TARJETAS DE MÓDULO (MÁS COMPACTAS) ====== */
 .module-list {
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
-  margin-top: 0.5rem;
+  gap: 0;
+  margin-top: 0;
 }
 
 .module-card {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.85rem;
-  padding: 0.7rem 0.9rem;
-  border-radius: 14px;
-  background: #f9fafb;
-  border: 1px solid transparent;
+  justify-content: center;
+  gap: 0.35rem; /* Reducido de 0.5rem */
+  padding: 0.9rem 0.4rem; /* Reducido padding */
+  border-radius: 0;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
   cursor: pointer;
-  transition: background 0.12s ease, box-shadow 0.12s ease,
-    border-color 0.12s ease, transform 0.1s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  color: #9ca3af;
 }
 
 .module-card:hover {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.18);
-  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
+  border-left-color: #3b82f6;
 }
 
 .module-card.selected {
-  background: #e0edff;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.5);
+  background: rgba(37, 99, 235, 0.1);
+  border-left-color: #2563eb;
+  color: #ffffff;
 }
 
 .module-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 999px;
+  width: 28px; /* Reducido de 32px */
+  height: 28px;
+  border-radius: 6px; /* Reducido de 8px */
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  color: #ffffff;
-  font-size: 0.95rem;
+  font-weight: 600;
+  color: inherit;
+  font-size: 1.1rem; /* Reducido de 1.2rem */
+  background: transparent;
+  flex-shrink: 0;
 }
 
+.module-icon.lc,
+.module-icon.hhmm,
+.module-icon.aud,
+.module-icon.mant,
+.module-icon.val,
+.module-icon.rc,
+.module-icon.hist {
+  background: transparent;
+  color: inherit;
+}
+
+/* Iconos con emojis más pequeños */
+.module-icon.lc::before { content: "📊"; font-size: 1rem; }
+.module-icon.hhmm::before { content: "💰"; font-size: 1rem; }
+.module-icon.aud::before { content: "🔍"; font-size: 1rem; }
+.module-icon.mant::before { content: "⚙️"; font-size: 1rem; }
+.module-icon.val::before { content: "💵"; font-size: 1rem; }
+.module-icon.rc::before { content: "👥"; font-size: 1rem; }
+.module-icon.hist::before { content: "📋"; font-size: 1rem; }
+
+.module-info-title {
+  font-size: 0.7rem; /* Reducido de 0.75rem */
+  font-weight: 500;
+  line-height: 1.1;
+  text-align: center;
+  color: inherit;
+  max-width: 100%;
+  word-wrap: break-word;
+  hyphens: auto;
+}
+
+.module-info-subtitle {
+  display: none;
+}
+/* Eliminamos los colores de fondo de los iconos */
+.module-icon.lc,
+.module-icon.hhmm,
+.module-icon.aud,
+.module-icon.mant,
+.module-icon.val,
+.module-icon.rc,
+.module-icon.hist {
+  background: transparent;
+  color: inherit;
+}
+
+/* Usamos iconos Unicode o emojis simples */
+.module-icon.lc::before { content: "📊"; }
+.module-icon.hhmm::before { content: "💰"; }
+.module-icon.aud::before { content: "🔍"; }
+.module-icon.mant::before { content: "⚙️"; }
+.module-icon.val::before { content: "💵"; }
+.module-icon.rc::before { content: "👥"; }
+.module-icon.hist::before { content: "📋"; }
+
+.module-info-title {
+  font-size: 0.75rem; /* Texto más pequeño */
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  color: inherit;
+}
+
+.module-info-subtitle {
+  display: none;
+}
+/* colores distintos por módulo (sin cambios) */
+.module-icon.lc { background: #2563eb; }
+.module-icon.hhmm { background: #0ea5e9; }
+.module-icon.aud { background: #8b5cf6; }
+.module-icon.mant { background: #16a34a; }
+.module-icon.val { background: #f97316; }
+.module-icon.rc { background: #0f766e; }
+.module-icon.hist { background: #dc2626; }
+
+.module-info-title {
+  font-size: 0.85rem; /* Era 0.95rem */
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.module-info-subtitle {
+  display: none; /* Ocultamos el subtítulo de cada módulo */
+}
 /* colores distintos por módulo (puedes ajustarlos) */
 .module-icon.lc {
   background: #2563eb;
@@ -307,25 +394,29 @@ button {
 }
 
 /* ====== CONTENIDO DE MÓDULO (DERECHA) ====== */
+/* ====== CONTENIDO DE MÓDULO (OPTIMIZADO) ====== */
 .module-content {
   flex: 1;
   background: #f9fafb;
-  border-radius: 18px;
-  padding: 1.75rem 2rem 2rem;
-  box-shadow: inset 0 0 0 1px #e5e7eb;
+  border-radius: 0;
+  padding: 1.25rem 1.5rem 1.5rem; /* Era 1.5rem 1.75rem 1.75rem */
+  box-shadow: none;
+  margin-left: 0;
+  overflow-x: auto;
 }
 
 .module-content h1 {
   margin-top: 0;
   margin-bottom: 0.25rem;
-  font-size: 1.8rem;
+  font-size: 1.5rem; /* Era 1.8rem */
+  font-weight: 700;
 }
 
 .module-content p.lead {
   margin-top: 0;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem; /* Era 1.5rem */
   color: #6b7280;
-  font-size: 0.95rem;
+  font-size: 0.85rem; /* Era 0.95rem */
 }
 
 /* ====== BLOQUE "PROCESAR LIQUIDACIONES" ====== */
@@ -372,115 +463,40 @@ button {
 .module-page {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 20px; /* Era 24px */
 }
 
 /* Contenedor principal: tarjeta de procesar + tarjeta de resumen */
 .module-sections {
   display: grid;
   grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
-  gap: 24px;
+  gap: 20px; /* Era 24px */
   align-items: flex-start;
 }
 
 /* Tarjetas blancas */
+/* ====== AJUSTE PARA TABLAS ANCHAS ====== */
 .section-card {
   background: #ffffff;
-  border-radius: 16px;
-  padding: 20px 24px;
+  border-radius: 12px; /* Era 16px */
+  padding: 16px 20px; /* Era 20px 24px */
   border: 1px solid #e5e7eb;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04); /* Sombra más sutil */
 }
 
-/* Títulos y textos */
-.section-title {
-  font-size: 1.15rem;
-  font-weight: 600;
-  margin: 0 0 6px;
-  color: #111827;
-}
-
-.section-subtitle {
-  font-size: 0.9rem;
-  color: #6b7280;
-  margin: 0 0 16px;
-}
-
-.section-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-/* Formulario de procesar */
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 16px;
-}
-
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.form-label {
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: #374151;
-}
-
-.form-input,
-.form-select {
-  height: 36px;
-  font-size: 0.9rem;
-  border-radius: 8px;
-  border: 1px solid #d1d5db;
-  padding: 6px 10px;
-  outline: none;
-}
-
-.form-input:focus,
-.form-select:focus {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.4);
-}
-
-/* Botones genéricos ya los tienes, solo usamos .btn-primary / .btn-secondary */
-.mt-3 {
-  margin-top: 0.75rem;
-}
-
-.text-error {
-  color: #b91c1c;
-  font-size: 0.9rem;
-}
-
-/* Filtros del resumen */
-.filters-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-/* Tabla simple */
 .table-wrapper {
-  max-height: 320px;
-  overflow: auto;
+  width: 100%;
+  overflow-x: auto; /* Scroll horizontal si la tabla es muy ancha */
+  max-height: 500px; /* Altura máxima con scroll vertical */
   border-radius: 12px;
   border: 1px solid #e5e7eb;
 }
 
 .simple-table {
   width: 100%;
+  min-width: 1200px; /* Ancho mínimo para que la tabla no se comprima */
   border-collapse: collapse;
-  font-size: 0.9rem;
-}
-
-.simple-table thead {
-  background: #f3f4f6;
+  font-size: 0.85rem; /* Texto un poco más pequeño */
 }
 
 .simple-table th,
@@ -488,50 +504,167 @@ button {
   padding: 8px 10px;
   border-bottom: 1px solid #e5e7eb;
   text-align: left;
+  white-space: nowrap; /* Evita que el texto se parta en varias líneas */
 }
 
 .simple-table th {
   font-weight: 600;
   color: #374151;
+  font-size: 0.8rem; /* Headers más pequeños */
+}
+
+/* Títulos y textos */
+.section-title {
+  font-size: 1rem; /* Era 1.15rem */
+  font-weight: 600;
+  margin: 0 0 4px; /* Era 0 0 6px */
+  color: #111827;
+}
+
+.section-subtitle {
+  font-size: 0.8rem; /* Era 0.9rem */
+  color: #6b7280;
+  margin: 0 0 12px; /* Era 0 0 16px */
+  line-height: 1.4;
+}
+
+.section-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px; /* Añadido para separación */
+}
+
+/* Formulario de procesar */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px; /* Era 12px 16px */
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px; /* Era 4px */
+}
+
+.form-label {
+  font-size: 0.8rem; /* Era 0.85rem */
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 3px; /* Era 4px */
+}
+
+.form-input,
+.form-select {
+  height: 32px; /* Era 36px */
+  font-size: 0.8rem; /* Era 0.9rem */
+  border-radius: 6px; /* Era 8px */
+  border: 1px solid #d1d5db;
+  padding: 4px 8px; /* Era 6px 10px */
+  outline: none;
+  background: #ffffff;
+}
+
+.form-input:focus,
+.form-select:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.3); /* Sombra más sutil */
+}
+
+/* Botones genéricos ya los tienes, solo usamos .btn-primary / .btn-secondary */
+.mt-3 {
+  margin-top: 0.6rem; /* Era 0.75rem */
+}
+.text-error {
+  color: #b91c1c;
+  font-size: 0.8rem; /* Era 0.9rem */
+  margin-top: 4px;
+}
+
+/* Filtros del resumen */
+.filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px; /* Era 16px */
+  margin-bottom: 12px; /* Era 16px */
+}
+
+/* Tabla simple */
+.table-wrapper {
+  max-height: 450px; /* Aumentado de 320px para ver más filas */
+  overflow: auto;
+  border-radius: 10px; /* Era 12px */
+  border: 1px solid #e5e7eb;
+}
+
+.simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem; /* Era 0.9rem */
+}
+
+.simple-table thead {
+  background: #f3f4f6;
+}
+
+
+.simple-table th,
+.simple-table td {
+  padding: 6px 8px; /* Era 8px 10px */
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+}
+
+.simple-table th {
+  font-weight: 600;
+  color: #374151;
+  font-size: 0.75rem; /* Era igual al body */
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
 }
 
 .table-empty {
   text-align: center;
   color: #9ca3af;
-  padding: 16px 0;
+  padding: 12px 0; /* Era 16px 0 */
+  font-size: 0.8rem;
 }
 
 /* Pie de resumen */
 .summary-footer {
-  margin-top: 12px;
+  margin-top: 10px; /* Era 12px */
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 10px; /* Era 12px */
   flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid #e5e7eb;
 }
+
 
 .summary-totals {
   display: flex;
   align-items: baseline;
   gap: 6px;
+  flex-wrap: wrap;
 }
-
 .summary-label {
-  font-size: 0.9rem;
+  font-size: 0.8rem; /* Era 0.9rem */
   color: #4b5563;
 }
 
 .summary-value {
-  font-size: 1rem;
+  font-size: 0.9rem; /* Era 1rem */
   font-weight: 600;
   color: #111827;
-}
+}s
 /* Layout vertical solo para algunas páginas (ej: Liquidación de Clientes) */
 .module-sections-vertical {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 20px; /* Era 24px */
 }
 .module-icon.usr {
   background: #f97316; /* naranja, por ejemplo */
@@ -977,11 +1110,11 @@ button {
 
 /* Botón compacto para acciones en tabla */
 .btn-sm {
-  padding: 8px 12px;
-  border-radius: 10px;
-  font-size: 0.9rem;
+  padding: 0.35rem 0.75rem; /* Era 6px 10px */
+  border-radius: 6px; /* Era 8px */
+  font-size: 0.75rem; /* Era 0.8rem */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
-
 /* Opcional: reduce un poco el radio del botón grande por consistencia */
 .simple-table td .btn-primary,
 .simple-table th .btn-primary {

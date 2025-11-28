@@ -14,6 +14,7 @@ const MODULES = [
     id: "clientes",
     title: "Liquidación",
     iconClass: "lc",
+    // Eliminamos subtitle
   },
   {
     id: "hhmm",
@@ -23,7 +24,6 @@ const MODULES = [
   {
     id: "auditorias",
     title: "Auditorías",
-
     iconClass: "aud",
   },
   {
@@ -44,7 +44,7 @@ const MODULES = [
   {
     id: "liq_hist",
     title: "Histórico",
-    iconClass: "hist"   // puedes usar otro icono
+    iconClass: "hist"
   },
 ];
 
@@ -215,12 +215,9 @@ export default function Menu({ user, onLogout }) {
                   onClick={() => setSelectedModule(m.id)}
                 >
                   <div className={`module-icon ${m.iconClass}`}>
-                    {m.title.charAt(0)}
+                    {/* Dejamos vacío, el icono se muestra con ::before */}
                   </div>
-                  <div>
-                    <div className="module-info-title">{m.title}</div>
-                    <div className="module-info-subtitle">{m.subtitle}</div>
-                  </div>
+                  <div className="module-info-title">{m.title}</div>
                 </button>
               ))}
             </div>

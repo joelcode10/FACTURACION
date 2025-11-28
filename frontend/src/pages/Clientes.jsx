@@ -7,20 +7,22 @@ import {
   fetchDetalleConPendientes,
   anularPendiente
 } from "../lib/api.js";
+// mensajes de liquidación
 
+const STORAGE_KEY = "liquidacion_clientes_state_v1";
 export default function Clientes() {
-  
+  const [mensajeLiq, setMensajeLiq] = useState("");
   // filtros de consulta al backend
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [condicionPago, setCondicionPago] = useState("TODAS");
   const [filtroFirma, setFiltroFirma] = useState("TODAS"); // TODAS | CON_FIRMA | SIN_FIRMA
   const [liquidando, setLiquidando] = useState(false);
-  const [mensajeLiq, setMensajeLiq] = useState("");
-  const [loading, setLoading] = useState(false);
-  
-  const [error, setError] = useState("");
 
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  
+  
   // datos del backend
   const [groups, setGroups] = useState([]);
   const [detailsByGroupId, setDetailsByGroupId] = useState({});
@@ -43,7 +45,40 @@ export default function Clientes() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailGroupId, setDetailGroupId] = useState(null);
   const [exclState, setExclState] = useState(new Map()); // key: `${nro}||${doc}` -> bool
-  
+  // 🔹 1) Cargar estado guardado al montar el módulo
+useEffect(() => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+
+    if (saved.from) setFrom(saved.from);
+    if (saved.to) setTo(saved.to);
+    if (saved.condicionPago) setCondicionPago(saved.condicionPago);
+    if (Array.isArray(saved.groups)) setGroups(saved.groups);
+    if (saved.detailsByGroupId) setDetailsByGroupId(saved.detailsByGroupId);
+    if (saved.filters) setFilters(saved.filters);
+  } catch (e) {
+    console.error("Error restaurando estado de liquidación:", e);
+  }
+}, []);
+
+// 🔹 2) Guardar cada vez que cambian filtros y datos
+useEffect(() => {
+  try {
+    const data = {
+      from,
+      to,
+      condicionPago,
+      groups,
+      detailsByGroupId,
+      filters,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.error("Error guardando estado de liquidación:", e);
+  }
+}, [from, to, condicionPago, groups, detailsByGroupId, filters]);
   useEffect(() => {
     // reset filtros UI cuando llegan nuevos filtros
     setFCliente("TODOS");
@@ -187,7 +222,7 @@ export default function Clientes() {
     //    a) filas normales del SP
     //    b) filas pendientes que no vengan ya en el SP (caso raro)
     const combined = [];
-
+ 
     // a) Normales (SP export) → los mapeamos al formato interno
     rowsNormales.forEach((r) => {
       const nro = (r.Nro || r.nro || "").trim();
@@ -640,6 +675,7 @@ const patientsInGroup = useMemo(() => {
                 <th>Tipo evaluación</th>
                 <th style={{ textAlign: "right" }}>Importe</th>
                 <th>Estado</th>
+                <th>Código</th>
                 <th>Detalle</th>
               </tr>
             </thead>
@@ -652,8 +688,15 @@ const patientsInGroup = useMemo(() => {
                 </tr>
               ) : (
                 viewGroups.map((g) => (
-                  <tr key={g.id}>
-                    <td>
+                  <tr
+                    key={g.id}
+                    style={
+                      g.esSoloPendiente
+                        ? { backgroundColor: "#FFF3CD" } // un amarillo suave para pendientes
+                        : {}
+                    }
+                  >
+                  <td>
                       <input
                         type="checkbox"
                         checked={selectedIds.has(g.id)}
@@ -667,22 +710,53 @@ const patientsInGroup = useMemo(() => {
                     <td style={{ textAlign: "right" }}>
                       {fmtMoney(g.importe)}
                     </td>
-                    <td>
-                      <span
-                        style={{
-                          padding: "4px 8px",
-                          borderRadius: 6,
-                          fontSize: 12,
-                          fontWeight: 600,
-                          background:
-                            g.estadoLiquidado === "LIQUIDADO" ? "#C8E6C9" : "#FFCDD2",
-                          color:
-                            g.estadoLiquidado === "LIQUIDADO" ? "#256029" : "#B71C1C",
-                        }}
-                      >
-                        {g.estadoLiquidado}
-                      </span>
+                   <td>
+                      {g.estadoLiquidado === "LIQUIDADO" && (
+                        <span
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: "#C8E6C9",   // verde claro
+                            color: "#256029",        // verde fuerte
+                          }}
+                        >
+                          Liquidado
+                        </span>
+                      )}
+
+                      {g.estadoLiquidado === "PARCIAL" && (
+                        <span
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: "#FFF3CD",   // amarillo claro
+                            color: "#856404",        // amarillo oscuro
+                          }}
+                        >
+                          Parcial
+                        </span>
+                      )}
+
+                      {g.estadoLiquidado === "NO" && (
+                        <span
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: "#FFCDD2",   // rojo claro
+                            color: "#B71C1C",        // rojo fuerte
+                          }}
+                        >
+                          No liquidado
+                        </span>
+                      )}
                     </td>
+                    <td style={{ textAlign: "center", fontWeight: 600 }}>{g.codigo ? g.codigo : "-"}</td>
                     <td>
                       <button
                         className="btn-primary btn-sm"
