@@ -22,7 +22,9 @@ export default function Clientes() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   
-  
+  const [exportando, setExportando] = useState(false);
+const [savingExclusions, setSavingExclusions] = useState(false);
+const [anulandoPendienteKey, setAnulandoPendienteKey] = useState(null);
   // datos del backend
   const [groups, setGroups] = useState([]);
   const [detailsByGroupId, setDetailsByGroupId] = useState({});
@@ -328,11 +330,20 @@ const patientsInGroup = useMemo(() => {
         nro: r.nro,
         importe: 0,
         isPendiente: false, // 👈 nuevo
+        fechaInicio : r.fechaInicio || null,
       };
 
     prev.importe += Number(r.precioCb || 0);
 
-    // Si alguna prestación del paciente está marcada como pendiente, marcamos al paciente como pendiente
+        // 👇 si esta fila tiene fecha y es más antigua que la guardada, la usamos
+    if (
+      r.fechaInicio &&
+      (!prev.fechaInicio ||
+        new Date(r.fechaInicio) < new Date(prev.fechaInicio))
+    ) {
+      prev.fechaInicio = r.fechaInicio;
+    }
+
     if (r.isPendiente) {
       prev.isPendiente = true;
     }
@@ -342,7 +353,14 @@ const patientsInGroup = useMemo(() => {
 
   return Array.from(acc.values());
 }, [detailGroupId, detailsByGroupId]);
+// Grupo actual y si es editable (solo cuando estadoLiquidado === "NO")
+  const grupoActual = useMemo(
+    () => groups.find((g) => g.id === detailGroupId) || null,
+    [groups, detailGroupId]
+  );
 
+  const isGroupEditable =
+    !grupoActual || grupoActual.estadoLiquidado === "NO";
   function setExclude(nro, doc, value) {
     const k = `${nro || ""}||${doc || ""}`;
     setExclState((prev) => {
@@ -403,78 +421,67 @@ const patientsInGroup = useMemo(() => {
   }
 }
   async function saveExclusionsClick() {
-  // Filas originales del grupo (detalle completo que vino del backend)
-  const rows = detailsByGroupId[detailGroupId] || [];
+  try {
+    // 🔒 No permitir cambios si el grupo ya está liquidado o parcial
+    if (grupoActual && grupoActual.estadoLiquidado !== "NO") {
+      alert(
+        "No puedes modificar pendientes de un grupo que ya está liquidado o parcial. " +
+        "Primero anula la liquidación y vuelve a procesar."
+      );
+      return;
+    }
+    setSavingExclusions(true);
 
-  // Resumen del grupo actual (cliente, unidad, tipo, sede, etc.)
-  const grp = groups.find((g) => g.id === detailGroupId) || {};
+    const rows = detailsByGroupId[detailGroupId] || [];
+    const grp = groups.find((g) => g.id === detailGroupId) || {};
+    const items = [];
 
-  const items = [];
+    for (const p of patientsInGroup) {
+      const k = `${p.nro || ""}||${p.documento || ""}`;
+      const marcado = !!exclState.get(k);
 
-  // Recorremos TODOS los pacientes del grupo (marcados y no marcados)
-  for (const p of patientsInGroup) {
-    const k = `${p.nro || ""}||${p.documento || ""}`;
-    const marcado = !!exclState.get(k); // true = NO liquidar (PENDIENTE), false = ANULAR
+      const matchingRow =
+        rows.find(
+          (r) =>
+            (r.nro || "") === (p.nro || "") &&
+            (r.documento || "") === (p.documento || "")
+        ) || {};
 
-    // Filas originales del grupo para completar datos
-    const matchingRow =
-      rows.find(
-        (r) =>
-          (r.nro || "") === (p.nro || "") &&
-          (r.documento || "") === (p.documento || "")
-      ) || {};
+      const nroFinal = p.nro || matchingRow.nro || "";
 
-    // Aseguramos que siempre haya un Nro
-    const nroFinal = p.nro || matchingRow.nro || "";
+      items.push({
+        nro: nroFinal,
+        documento: p.documento || matchingRow.documento || "",
+        exclude: marcado,
+        paciente: p.paciente || matchingRow.paciente || "",
+        cliente: grp.cliente || matchingRow.cliente || "",
+        unidadProduccion:
+          grp.unidadProduccion || matchingRow.unidadProduccion || "",
+        tipoEvaluacion:
+          grp.tipoEvaluacion || matchingRow.tipoEvaluacion || "",
+        sedeNombre: matchingRow.sedeNombre || grp.sedeNombre || "",
+        importe: p.importe ?? matchingRow.precioCb ?? 0,
+        createdBy: "admin",
+      });
+    }
 
-    items.push({
-      nro: nroFinal,
-      documento: p.documento || matchingRow.documento || "",
-      exclude: marcado, // 👈 clave: true = PENDIENTE, false = ANULADO
-      paciente: p.paciente || matchingRow.paciente || "",
-      cliente: grp.cliente || matchingRow.cliente || "",
-      unidadProduccion:
-        grp.unidadProduccion || matchingRow.unidadProduccion || "",
-      tipoEvaluacion:
-        grp.tipoEvaluacion || matchingRow.tipoEvaluacion || "",
-      sedeNombre: matchingRow.sedeNombre || grp.sedeNombre || "",
-      importe: p.importe ?? matchingRow.precioCb ?? 0,
-      createdBy: "admin", // luego lo cambias por el usuario logueado
-    });
-  }
-
-  // Llamamos a la API con rango, condición y lista de pendientes
-  await saveExclusions({
-    from,
-    to,
-    condicionPago,
-    items,
-  });
-
-  closeDetalle();
-  // refrescar para que ya no aparezcan los PENDIENTES en este período
-  await handleProcess();
-}
-
-  async function exportarSeleccionados() {
-    if (!selectedIds.size) return;
-    const selectedIdsArr = Array.from(selectedIds);
-    const blob = await exportLiquidaciones({
+    await saveExclusions({
       from,
       to,
       condicionPago,
-      selectedIds: selectedIdsArr,
+      items,
     });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "liquidaciones.xlsx";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+
+    closeDetalle();
+    await handleProcess();
+  } catch (err) {
+    console.error(err);
+    alert("Error al guardar pendientes.");
+  } finally {
+    setSavingExclusions(false);
   }
-  async function liquidarSeleccionados() {
+}
+async function liquidarSeleccionados() {
   setMensajeLiq("");
 
   if (!from || !to) {
@@ -532,7 +539,7 @@ const patientsInGroup = useMemo(() => {
     setSelectedIds(new Set());
     setSelectAll(false);
 
-    // 🔄 Volver a procesar para que el backend marque esos grupos como LIQUIDADO
+    // Volver a procesar para que el backend marque esos grupos como LIQUIDADO
     await handleProcess();
   } catch (err) {
     console.error("Error al liquidar:", err);
@@ -541,12 +548,47 @@ const patientsInGroup = useMemo(() => {
     setLiquidando(false);
   }
 }
+  async function exportarSeleccionados() {
+  if (!selectedIds.size) return;
+  const selectedIdsArr = Array.from(selectedIds);
+
+  try {
+    setExportando(true);
+    const blob = await exportLiquidaciones({
+      from,
+      to,
+      condicionPago,
+      selectedIds: selectedIdsArr,
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "liquidaciones.xlsx";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error(err);
+    alert("Error al exportar.");
+  } finally {
+    setExportando(false);
+  }
+}
+
+
   const fmtMoney = (n) =>
     Number(n || 0).toLocaleString("es-PE", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
 
+const fmtDate = (d) => {
+  if (!d) return "-";
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return d;
+  return dt.toISOString().slice(0, 10); // YYYY-MM-DD
+};
   return (
     <div className="module-page">
       {/* Procesar (ancho completo) */}
@@ -589,9 +631,13 @@ const patientsInGroup = useMemo(() => {
           </div>
 
           <div className="mt-3" style={{ gridColumn: "1 / -1" }}>
-            <button type="submit" className="btn-primary" disabled={loading}>
-              {loading ? "Buscando..." : "Buscar"}
-            </button>
+          <button
+            type="submit"
+            className={`btn-primary ${loading ? "btn-loading" : ""}`}
+            disabled={loading}
+          >
+            {loading ? "Buscando..." : "Buscar"}
+          </button>
           </div>
         </form>
 
@@ -669,7 +715,6 @@ const patientsInGroup = useMemo(() => {
                     onChange={toggleSelectAll}
                   />
                 </th>
-                <th>Fecha inicio</th>
                 <th>Cliente</th>
                 <th>Unidad de producción</th>
                 <th>Tipo evaluación</th>
@@ -691,8 +736,8 @@ const patientsInGroup = useMemo(() => {
                   <tr
                     key={g.id}
                     style={
-                      g.esSoloPendiente
-                        ? { backgroundColor: "#FFF3CD" } // un amarillo suave para pendientes
+                      g.estadoLiquidado === "NO" && g.esSoloPendiente
+                        ? { backgroundColor: "#FFF3CD" }
                         : {}
                     }
                   >
@@ -703,7 +748,6 @@ const patientsInGroup = useMemo(() => {
                         onChange={() => toggleSelect(g.id)}
                       />
                     </td>
-                    <td className="nowrap">{g.fechaInicioMin || "-"}</td>
                     <td>{g.cliente || "-"}</td>
                     <td>{g.unidadProduccion || "-"}</td>
                     <td>{g.tipoEvaluacion || "-"}</td>
@@ -787,14 +831,14 @@ const patientsInGroup = useMemo(() => {
           
           <div style={{ display: "flex", gap: 8 }}>
             <button
-              className="btn-primary btn-sm"
-              disabled={!selectedIds.size || subtotal === 0 || loading}
+              className={`btn-primary btn-sm ${exportando ? "btn-loading" : ""}`}
+              disabled={!selectedIds.size || subtotal === 0 || loading || exportando}
               onClick={exportarSeleccionados}
             >
-              Exportar
+              {exportando ? "Exportando..." : "Exportar"}
             </button>
             <button
-              className="btn-primary btn-sm"
+              className={`btn-primary btn-sm ${liquidando ? "btn-loading" : ""}`}
               onClick={liquidarSeleccionados}
               disabled={liquidando || !selectedIds.size}
             >
@@ -833,11 +877,12 @@ const patientsInGroup = useMemo(() => {
               </h3>
               <div style={{ display: "flex", gap: 8 }}>
                 <button
-                  className="btn-primary btn-sm"
-                  onClick={saveExclusionsClick}
-                >
-                  Guardar
-                </button>
+  className={`btn-primary btn-sm ${savingExclusions ? "btn-loading" : ""}`}
+  onClick={saveExclusionsClick}
+  disabled={savingExclusions}
+>
+  {savingExclusions ? "Guardando..." : "Guardar"}
+</button>
                 <button
                   className="btn-primary btn-sm"
                   onClick={closeDetalle}
@@ -858,6 +903,7 @@ const patientsInGroup = useMemo(() => {
               <table className="simple-table">
                 <thead>
                   <tr>
+                    <th>Fecha inicio</th>
                     <th>Paciente</th>
                     <th>Documento</th>
                     <th style={{ textAlign: "right" }}>Importe</th>
@@ -880,6 +926,7 @@ const patientsInGroup = useMemo(() => {
 
                           return (
                             <tr key={`${k}||${idx}`}>
+                              <td>{fmtDate(p.fechaInicio)}</td>
                               <td>{p.paciente || "-"}</td>
                               <td>{p.documento || "-"}</td>
                               <td style={{ textAlign: "right" }}>{fmtMoney(p.importe)}</td>
@@ -891,7 +938,7 @@ const patientsInGroup = useMemo(() => {
                                 <input
                                   type="checkbox"
                                   checked={checked}
-                                  disabled={esPendiente} // 👈 ya está pendiente, no se edita aquí
+                                  disabled={esPendiente || !isGroupEditable}
                                   onChange={(e) =>
                                     setExclude(p.nro, p.documento, e.target.checked)
                                   }
@@ -899,14 +946,14 @@ const patientsInGroup = useMemo(() => {
                               </td>
 
                               {/* Acción: solo aparece si YA es pendiente */}
-                              <td>
+                              <td> 
                                 {esPendiente ? (
                                   <button
                                     type="button"
                                     className="btn-primary btn-sm"
                                     onClick={() => handleAnularPendiente(p)}
                                   >
-                                    Anular pendiente
+                                    Anular
                                   </button>
                                 ) : (
                                   <span style={{ fontSize: 12, color: "#777" }}>-</span>

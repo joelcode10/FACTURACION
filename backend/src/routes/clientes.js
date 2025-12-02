@@ -324,9 +324,14 @@ for (const p of pendientesExtra) {
   const importeNum = Number(p.Importe ?? 0);
   const estadoPend = (p.Estado || "").toUpperCase();
   const esPendiente = estadoPend === "PENDIENTE";
+
+  // 👉 Fallback de fecha: primero FechaInicio, luego Desde, luego Hasta
+  const fechaInicioPend =
+    p.FechaInicio || p.Desde || p.Hasta || null;
+
   details.push({
     nro,
-    fechaInicio: p.FechaInicio || null,
+    fechaInicio: fechaInicioPend,
 
     cliente,
     rucCliente: null,
@@ -348,7 +353,9 @@ for (const p of pendientesExtra) {
 
     isPendiente: esPendiente,
     estaLiquidado: false,
-    origenPendiente: true,
+
+    // 👇 Solo se considera "origenPendiente" mientras el registro siga PENDIENTE
+    origenPendiente: esPendiente,
   });
 }
   // ===========================
@@ -467,12 +474,24 @@ for (const grp of groupMap.values()) {
     grp.rows.length > 0 && grp.rows.every((r) => r.isPendiente === true);
 
   // 🔑 Elegimos qué importe mostrar al front:
-  // - Si es grupo pendiente puro (solo pendientes): mostrar el total del grupo
-  // - Si está totalmente liquidado: mostrar el total del grupo (lo ya liquidado)
-  // - En otros casos (NO o PARCIAL): mostrar solo lo disponible
-  if (grp.esSoloPendiente || grp.esGrupoPendiente) {
+  // - Si es grupo 100% pendiente en el período actual (solo pendientes, nada liquidado):
+  //     → no hay nada para liquidar ahora → importe = disponible (0)
+  // - Si es grupo que viene de pendientes de otros periodos (esGrupoPendiente):
+  //     → mostrar el total para que se vea la “bolsa” pendiente
+  // - Si está totalmente liquidado:
+  //     → mostrar el total (lo ya liquidado)
+  // - En otros casos (NO o PARCIAL con disponibles):
+  //     → mostrar solo lo disponible
+  if (grp.esSoloPendiente && !grp.tieneLiquidados) {
+    // Todos los episodios del grupo son NO liquidar en este rango
+    grp.importe = grp.importeDisponible; // será 0
+  } else if (grp.esGrupoPendiente) {
+    // Pendientes arrastrados de otros períodos
     grp.importe = grp.importeTotal;
   } else if (grp.estadoLiquidado === "LIQUIDADO") {
+    grp.importe = grp.importeTotal;
+  } else if (grp.estadoLiquidado === "PARCIAL" && !grp.tieneDisponibles) {
+    // Parcial pero ya no queda nada disponible (solo liquidados + pendientes)
     grp.importe = grp.importeTotal;
   } else {
     grp.importe = grp.importeDisponible;
@@ -513,10 +532,15 @@ for (const grp of groupMap.values()) {
   const c = (a.cliente || "").localeCompare(b.cliente || "");
   if (c !== 0) return c;
 
-  // 3) Y por fecha mínima
-  const fa = a.fechaInicioMin || "";
-  const fb = b.fechaInicioMin || "";
-  return fa.localeCompare(fb);
+  // 3) Y por fecha mínima (comparando por timestamp)
+  const ta = a.fechaInicioMin ? new Date(a.fechaInicioMin).getTime() : 0;
+  const tb = b.fechaInicioMin ? new Date(b.fechaInicioMin).getTime() : 0;
+
+  if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+  if (Number.isNaN(ta)) return 1;
+  if (Number.isNaN(tb)) return -1;
+
+  return ta - tb;
 });
     const clientesSet = new Set();
     const tiposSet = new Set();

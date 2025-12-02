@@ -213,9 +213,9 @@ export default function LiquidacionesClientes() {
           </div>
 
           <div className="mt-3" style={{ gridColumn: "1 / -1" }}>
-            <button type="submit" className="btn-primary" disabled={loading}>
-              {loading ? "Buscando..." : "Buscar"}
-            </button>
+            <button type="submit"className={'btn-primary ${loading ? "btn-loading" : ""}'}disabled={loading}>
+          {loading ? "Buscando..." : "Buscar"}
+        </button>
           </div>
         </form>
 
