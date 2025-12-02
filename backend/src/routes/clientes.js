@@ -323,11 +323,27 @@ for (const p of pendientesExtra) {
   const tipoEvalNorm = mapTipoEvaluacion(p.TipoEvaluacion || "");
   const importeNum = Number(p.Importe ?? 0);
   const estadoPend = (p.Estado || "").toUpperCase();
-  const esPendiente = estadoPend === "PENDIENTE";
+
+  // 🔍 Determinar si es del MISMO periodo o arrastrado
+  let esMismoPeriodo = false;
+  if (p.Desde && p.Hasta) {
+    const desdeStr = new Date(p.Desde).toISOString().slice(0, 10);
+    const hastaStr = new Date(p.Hasta).toISOString().slice(0, 10);
+    esMismoPeriodo = desdeStr === from && hastaStr === to;
+  }
+
+  // 👉 Regla:
+  // - Si es MISMO periodo y Estado = PENDIENTE → sigue siendo "no liquidar" en este rango
+  // - Si es de periodos anteriores (arrastrado) → se considera disponible para liquidar,
+  //   pero marcamos origenPendiente = true para poder resaltarlo.
+  const esPendienteMismoPeriodo =
+    esMismoPeriodo && estadoPend === "PENDIENTE";
+
+  const esArrastradoPendiente =
+    !esMismoPeriodo && estadoPend === "PENDIENTE";
 
   // 👉 Fallback de fecha: primero FechaInicio, luego Desde, luego Hasta
-  const fechaInicioPend =
-    p.FechaInicio || p.Desde || p.Hasta || null;
+  const fechaInicioPend = p.FechaInicio || p.Desde || p.Hasta || null;
 
   details.push({
     nro,
@@ -351,11 +367,13 @@ for (const p of pendientesExtra) {
     sedeCodigo,
     sedeNombre,
 
-    isPendiente: esPendiente,
+    // 🔔 Sólo se bloquea en el MISMO periodo
+    isPendiente: esPendienteMismoPeriodo,
     estaLiquidado: false,
 
-    // 👇 Solo se considera "origenPendiente" mientras el registro siga PENDIENTE
-    origenPendiente: esPendiente,
+    // 🔔 Si viene de periodos anteriores lo marcamos como "origenPendiente"
+    //     pero se puede liquidar directamente
+    origenPendiente: esArrastradoPendiente,
   });
 }
   // ===========================
@@ -375,33 +393,36 @@ for (const row of details) {
 
   let grp = groupMap.get(keyGrupo);
   if (!grp) {
-    grp = {
-      id: keyGrupo,
-      cliente: row.cliente,
-      unidadProduccion: row.unidadProduccion,
-      tipoEvaluacion: row.tipoEvaluacion,
-      sedeNombre: row.sedeNombre,
-      fechaInicioMin: row.fechaInicio,
+    // dentro del if (!grp) { ... }
+  grp = {
+    id: keyGrupo,
+    cliente: row.cliente,
+    unidadProduccion: row.unidadProduccion,
+    tipoEvaluacion: row.tipoEvaluacion,
+    sedeNombre: row.sedeNombre,
+    fechaInicioMin: row.fechaInicio,
 
-      // 👉 nuevo: separamos importes
-      importeTotal: 0,        // suma de TODAS las filas del grupo
-      importeDisponible: 0,   // solo lo que se puede liquidar
-      importe: 0,             // el que enviaremos al front
+    // 👉 separa importes
+    importeTotal: 0,        // suma de TODAS las filas
+    importeDisponible: 0,   // filas que se pueden liquidar
+    importeLiquidado: 0,    // NUEVO: filas ya liquidadas
+    importePendiente: 0,    // NUEVO: filas marcadas PENDIENTE
+    importe: 0,             // el que se envía al front
 
-      rows: [],
-      firmaStatus: "SIN_FIRMA",
+    rows: [],
+    firmaStatus: "SIN_FIRMA",
 
-      // estado
-      estadoLiquidado: "NO",
-      codigo: null,
+    // estado
+    estadoLiquidado: "NO",
+    codigo: null,
 
-      // flags internos
-      tienePendientes: false,
-      tieneLiquidados: false,
-      tieneDisponibles: false,
-      esSoloPendiente: false,
-      esGrupoPendiente: false,
-    };
+    // flags internos
+    tienePendientes: false,
+    tieneLiquidados: false,
+    tieneDisponibles: false,
+    esSoloPendiente: false,
+    esGrupoPendiente: false,
+  };
     groupMap.set(keyGrupo, grp);
   }
 
@@ -424,7 +445,13 @@ for (const row of details) {
   if (!row.isPendiente && !row.estaLiquidado) {
     grp.importeDisponible += monto;
   }
-
+  // 💰 nuevo: acumular importes por estado
+  if (row.estaLiquidado) {
+    grp.importeLiquidado += monto;
+  }
+  if (row.isPendiente) {
+    grp.importePendiente += monto;
+  }
   // actualizar fecha mínima
   if (
     row.fechaInicio &&
@@ -459,7 +486,7 @@ for (const [, grp] of groupMap.entries()) {
 // 9) MARCAR ESTADO: NO / PARCIAL / LIQUIDADO + CÓDIGO
 // ======================================================
 for (const grp of groupMap.values()) {
-  // lógica de estado:
+  // 1) Estado general del grupo
   if (grp.tieneLiquidados) {
     if (grp.tienePendientes || grp.tieneDisponibles) {
       grp.estadoLiquidado = "PARCIAL";
@@ -469,35 +496,19 @@ for (const grp of groupMap.values()) {
   } else {
     grp.estadoLiquidado = "NO";
   }
+    // 🔑 Elegimos qué importe mostrar al front:
+if (grp.estadoLiquidado === "LIQUIDADO") {
+  // todo liquidado → mostrar todo
+  grp.importe = grp.importeTotal;
+} else if (grp.estadoLiquidado === "PARCIAL") {
+  // parcial → mostrar lo YA LIQUIDADO
+  grp.importe = grp.importeLiquidado;
+} else {
+  // estado "NO" → mostrar solo lo disponible
+  grp.importe = grp.importeDisponible;
+}
 
-  grp.esSoloPendiente =
-    grp.rows.length > 0 && grp.rows.every((r) => r.isPendiente === true);
-
-  // 🔑 Elegimos qué importe mostrar al front:
-  // - Si es grupo 100% pendiente en el período actual (solo pendientes, nada liquidado):
-  //     → no hay nada para liquidar ahora → importe = disponible (0)
-  // - Si es grupo que viene de pendientes de otros periodos (esGrupoPendiente):
-  //     → mostrar el total para que se vea la “bolsa” pendiente
-  // - Si está totalmente liquidado:
-  //     → mostrar el total (lo ya liquidado)
-  // - En otros casos (NO o PARCIAL con disponibles):
-  //     → mostrar solo lo disponible
-  if (grp.esSoloPendiente && !grp.tieneLiquidados) {
-    // Todos los episodios del grupo son NO liquidar en este rango
-    grp.importe = grp.importeDisponible; // será 0
-  } else if (grp.esGrupoPendiente) {
-    // Pendientes arrastrados de otros períodos
-    grp.importe = grp.importeTotal;
-  } else if (grp.estadoLiquidado === "LIQUIDADO") {
-    grp.importe = grp.importeTotal;
-  } else if (grp.estadoLiquidado === "PARCIAL" && !grp.tieneDisponibles) {
-    // Parcial pero ya no queda nada disponible (solo liquidados + pendientes)
-    grp.importe = grp.importeTotal;
-  } else {
-    grp.importe = grp.importeDisponible;
-  }
-
-  // si ya tienes armado codigosPorGrupo (como antes):
+  // 5) Código de liquidación (si existe)
   if (typeof codigosPorGrupo !== "undefined") {
     const keyNorm =
       (grp.cliente || "").trim().toUpperCase() +
@@ -524,24 +535,20 @@ for (const grp of groupMap.values()) {
     }
 
     groups.sort((a, b) => {
-  // 1) Grupos que provienen de pendientes primero
-  if (a.esGrupoPendiente && !b.esGrupoPendiente) return -1;
-  if (!a.esGrupoPendiente && b.esGrupoPendiente) return 1;
+    // 1) Por cliente
+    const c = (a.cliente || "").localeCompare(b.cliente || "");
+    if (c !== 0) return c;
 
-  // 2) Luego por cliente
-  const c = (a.cliente || "").localeCompare(b.cliente || "");
-  if (c !== 0) return c;
+    // 2) Por fecha mínima
+    const ta = a.fechaInicioMin ? new Date(a.fechaInicioMin).getTime() : 0;
+    const tb = b.fechaInicioMin ? new Date(b.fechaInicioMin).getTime() : 0;
 
-  // 3) Y por fecha mínima (comparando por timestamp)
-  const ta = a.fechaInicioMin ? new Date(a.fechaInicioMin).getTime() : 0;
-  const tb = b.fechaInicioMin ? new Date(b.fechaInicioMin).getTime() : 0;
+    if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+    if (Number.isNaN(ta)) return 1;
+    if (Number.isNaN(tb)) return -1;
 
-  if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
-  if (Number.isNaN(ta)) return 1;
-  if (Number.isNaN(tb)) return -1;
-
-  return ta - tb;
-});
+    return ta - tb;
+  });
     const clientesSet = new Set();
     const tiposSet = new Set();
     const sedesSet = new Set();
@@ -748,6 +755,36 @@ router.post("/export", async (req, res) => {
       `);
 
     const rows = result.recordset || [];
+    
+    // 🔹 Excluir los "NO liquidar" (pendientes) de este mismo periodo
+    const poolFact = await getPool();
+    const pendResult = await poolFact
+      .request()
+      .input("Desde", sql.Date, from)
+      .input("Hasta", sql.Date, to)
+      .query(`
+        SELECT Nro, Documento
+        FROM dbo.LiquidacionClientesPendientes
+        WHERE Estado = 'PENDIENTE'
+          AND Desde = @Desde
+          AND Hasta = @Hasta
+      `);
+
+    const pendientesSet = new Set(
+      (pendResult.recordset || []).map((p) => {
+        const nro = (p.Nro || "").trim();
+        const doc = (p.Documento || "").trim();
+        return `${nro}||${doc}`;
+      })
+    );
+
+    // Aplicamos filtro al detalle de exportación
+    const filteredRows = rows.filter((r) => {
+      const nro = (r.Nro || "").trim();
+      const doc = (r["Documento"] || r["N° Documento"] || "").trim();
+      const key = `${nro}||${doc}`;
+      return !pendientesSet.has(key);
+    });
 
     if (!rows.length) {
       return res.status(400).send("No hay datos para exportar.");
@@ -755,7 +792,7 @@ router.post("/export", async (req, res) => {
 
     // Construimos detalles a partir del SP de export (detallado)
     const details = [];
-    for (const r of rows) {
+    for (const r of filteredRows) {
       // si el SP ya trae Sede, usamos esa; si no, calculamos del Nro
       const { sedeCodigo, sedeNombre } = r["Sede"]
         ? { sedeCodigo: null, sedeNombre: r["Sede"] }
@@ -1010,24 +1047,29 @@ router.post("/liquidar", async (req, res) => {
       });
     }
 
-    // 2) LEER PENDIENTES (NO LIQUIDAR)
-    const poolFact = await getPool();
-    const pendResult = await poolFact.request().query(`
-      SELECT
-        Nro,
-        Documento
-      FROM dbo.LiquidacionClientesPendientes
-      WHERE Estado = 'PENDIENTE'
-    `);
+    // 2) LEER PENDIENTES (NO LIQUIDAR) SOLO DEL PERIODO ACTUAL
+const poolFact = await getPool();
+const pendResult = await poolFact
+  .request()
+  .input("Desde", sql.Date, from)
+  .input("Hasta", sql.Date, to)
+  .query(`
+    SELECT
+      Nro,
+      Documento
+    FROM dbo.LiquidacionClientesPendientes
+    WHERE Estado = 'PENDIENTE'
+      AND Desde = @Desde
+      AND Hasta = @Hasta
+  `);
 
-    const pendientesSet = new Set(
-      (pendResult.recordset || []).map((p) => {
-        const nro = (p.Nro || "").trim();
-        const doc = (p.Documento || "").trim();
-        return `${nro}||${doc}`;
-      })
-    );
-    const pendientesExtra = pendResult.recordset || [];
+const pendientesSet = new Set(
+  (pendResult.recordset || []).map((p) => {
+    const nro = (p.Nro || "").trim();
+    const doc = (p.Documento || "").trim();
+    return `${nro}||${doc}`;
+  })
+);
     // 3) Excluir NO liquidar
     const filtered = rawRows.filter((r) => {
       const nro = (r.Nro || "").trim();
@@ -1525,6 +1567,8 @@ router.post("/liquidaciones/:id/anular", async (req, res) => {
     });
   }
 });
+// clientes.js – reemplaza el contenido de router.get("/detalle-con-pendientes", ...)
+
 router.get("/detalle-con-pendientes", async (req, res) => {
   try {
     const { from, to, cliente, unidad, tipo, sede } = req.query;
@@ -1536,7 +1580,6 @@ router.get("/detalle-con-pendientes", async (req, res) => {
       });
     }
 
-    // 1) Obtener datos normales desde cbmedic
     const poolCb = await getPoolCbmedic();
     const data = await poolCb
       .request()
@@ -1560,7 +1603,7 @@ router.get("/detalle-con-pendientes", async (req, res) => {
       );
     });
 
-    // 2) Obtener pendientes desde FacturacionCBMedic
+    // 2) Pendientes (mismo criterio que /process)
     const poolFact = await getPool();
     const pend = await poolFact
       .request()
@@ -1568,6 +1611,8 @@ router.get("/detalle-con-pendientes", async (req, res) => {
       .input("Unidad", sql.NVarChar, unidad)
       .input("Tipo", sql.NVarChar, tipo)
       .input("Sede", sql.NVarChar, sede)
+      .input("DesdeActual", sql.Date, from)
+      .input("HastaActual", sql.Date, to)
       .query(`
         SELECT 
           Nro,
@@ -1578,9 +1623,20 @@ router.get("/detalle-con-pendientes", async (req, res) => {
           TipoEvaluacion,
           Sede,
           FechaInicio,
-          Importe
+          Importe,
+          CondicionPago,
+          Desde,
+          Hasta,
+          Estado,
+          CASE 
+            WHEN Estado = 'PENDIENTE' 
+              AND Desde = @DesdeActual 
+              AND Hasta = @HastaActual
+            THEN 1
+            ELSE 0
+          END AS EsPendienteActual
         FROM dbo.LiquidacionClientesPendientes
-        WHERE Estado = 'PENDIENTE'
+        WHERE Estado IN ('PENDIENTE','REACTIVADO')
           AND Cliente = @Cliente
           AND UnidadProduccion = @Unidad
           AND TipoEvaluacion = @Tipo

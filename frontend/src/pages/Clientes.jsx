@@ -211,14 +211,16 @@ useEffect(() => {
     const rowsNormales = resp.rowsNormales || [];
     const rowsPendientes = resp.rowsPendientes || [];
 
-    // 2) Armamos un set con las claves de los pendientes: Nro + Documento
-    const pendientesKeys = new Set(
-      rowsPendientes.map((r) => {
-        const nro = (r.Nro || r.nro || "").trim();
-        const doc = (r.Documento || r.documento || "").trim();
-        return `${nro}||${doc}`;
-      })
-    );
+    // NUEVO: solo pendientes del período actual
+  const pendientesKeys = new Set(
+  rowsPendientes
+    .filter((r) => Number(r.EsPendienteActual) === 1)
+    .map((r) => {
+      const nro = (r.Nro || r.nro || "").trim();
+      const doc = (r.Documento || r.documento || "").trim();
+      return `${nro}||${doc}`;
+    })
+);
 
     // 3) Combinamos:
     //    a) filas normales del SP
@@ -254,39 +256,52 @@ useEffect(() => {
           r["Importe"] || r["Precio CB"] || r.Importe || 0
         ),
         sedeNombre: r["Sede"] || grp.sedeNombre,
-        isPendiente: pendientesKeys.has(key), // 👈 ya estaba marcado "No liquidar"
+        isPendiente: pendientesKeys.has(key), 
+        origenPendiente: false,
       });
     });
 
     // b) Pendientes que no salgan en el SP (por si acaso)
-    rowsPendientes.forEach((r) => {
-      const nro = (r.Nro || "").trim();
-      const doc = (r.Documento || "").trim();
-      const key = `${nro}||${doc}`;
+rowsPendientes.forEach((r) => {
+  const nro = (r.Nro || "").trim();
+  const doc = (r.Documento || "").trim();
+  const key = `${nro}||${doc}`;
 
-      const yaExiste = combined.some(
-        (x) => `${x.nro}||${x.documento}` === key
-      );
-      if (yaExiste) return;
+  const yaExiste = combined.some(
+    (x) => `${x.nro}||${x.documento}` === key
+  );
+  if (yaExiste) return;
 
-      combined.push({
-        nro,
-        fechaInicio: r.FechaInicio || null,
-        cliente: r.Cliente || grp.cliente,
-        rucCliente: r.RucCliente || null,
-        unidadProduccion: r.UnidadProduccion || grp.unidadProduccion,
-        tipoEvaluacion: r.TipoEvaluacion || grp.tipoEvaluacion,
-        condicionPago: r.CondicionPago || "",
-        tipoDocumento: "",
-        documento: doc,
-        paciente: r.Paciente,
-        evaluador: r.Evaluador || "",
-        precioCb: Number(r.Importe || 0),
-        sedeNombre: r.Sede || grp.sedeNombre,
-        isPendiente: true,
-      });
-    });
+  // 🔹 Fallback robusto y ordenado para la fecha:
+  //    1) FechaInicio guardada por exclusión
+  //    2) Desde original del pendiente
+  //    3) Hasta original del pendiente
+  const fechaInicioPend =
+    r.FechaInicio ||
+    r.Desde ||
+    r.Hasta ||
+    null;
 
+  combined.push({
+    nro,
+    fechaInicio: fechaInicioPend,
+    cliente: r.Cliente || grp.cliente,
+    rucCliente: r.RucCliente || null,
+    unidadProduccion: r.UnidadProduccion || grp.unidadProduccion,
+    tipoEvaluacion: r.TipoEvaluacion || grp.tipoEvaluacion,
+    condicionPago: r.CondicionPago || "",
+    tipoDocumento: "",
+    documento: doc,
+    paciente: r.Paciente,
+    evaluador: r.Evaluador || "",
+    precioCb: Number(r.Importe || 0),
+    sedeNombre: r.Sede || grp.sedeNombre,
+
+    // ⚠️ Ambos flags necesarios
+    isPendiente: true,
+    origenPendiente: true,
+  });
+});
     // 4) Guardamos el detalle completo (normales + pendientes) para este grupo
     setDetailsByGroupId((prev) => ({
       ...prev,
@@ -315,8 +330,7 @@ useEffect(() => {
     setExclState(new Map());
   }
 
-  // detalle por paciente (agregando importe por paciente)
-const patientsInGroup = useMemo(() => {
+  const patientsInGroup = useMemo(() => {
   if (!detailGroupId) return [];
   const rows = detailsByGroupId[detailGroupId] || [];
   const acc = new Map();
@@ -329,23 +343,30 @@ const patientsInGroup = useMemo(() => {
         documento: r.documento,
         nro: r.nro,
         importe: 0,
-        isPendiente: false, // 👈 nuevo
-        fechaInicio : r.fechaInicio || null,
+        isPendiente: false,      // pendiente EN el periodo actual
+        origenPendiente: false,  // arrastrado de otro periodo
+        fechaInicio: r.fechaInicio || null,
       };
 
     prev.importe += Number(r.precioCb || 0);
 
-        // 👇 si esta fila tiene fecha y es más antigua que la guardada, la usamos
+    // si alguna prestación está marcada como pendiente actual
+    if (r.isPendiente) {
+      prev.isPendiente = true;
+    }
+
+    // si alguna prestación viene de pendientes de periodos anteriores
+    if (r.origenPendiente) {
+      prev.origenPendiente = true;
+    }
+
+    // fecha mínima por seguridad
     if (
       r.fechaInicio &&
       (!prev.fechaInicio ||
         new Date(r.fechaInicio) < new Date(prev.fechaInicio))
     ) {
       prev.fechaInicio = r.fechaInicio;
-    }
-
-    if (r.isPendiente) {
-      prev.isPendiente = true;
     }
 
     acc.set(k, prev);
@@ -462,6 +483,11 @@ const patientsInGroup = useMemo(() => {
         sedeNombre: matchingRow.sedeNombre || grp.sedeNombre || "",
         importe: p.importe ?? matchingRow.precioCb ?? 0,
         createdBy: "admin",
+        fechaInicio:
+        p.fechaInicio ||
+        matchingRow.fechaInicio ||
+        matchingRow.FechaInicio ||
+        null,
       });
     }
 
@@ -733,14 +759,7 @@ const fmtDate = (d) => {
                 </tr>
               ) : (
                 viewGroups.map((g) => (
-                  <tr
-                    key={g.id}
-                    style={
-                      g.estadoLiquidado === "NO" && g.esSoloPendiente
-                        ? { backgroundColor: "#FFF3CD" }
-                        : {}
-                    }
-                  >
+                  <tr key={g.id}>
                   <td>
                       <input
                         type="checkbox"
@@ -832,7 +851,7 @@ const fmtDate = (d) => {
           <div style={{ display: "flex", gap: 8 }}>
             <button
               className={`btn-primary btn-sm ${exportando ? "btn-loading" : ""}`}
-              disabled={!selectedIds.size || subtotal === 0 || loading || exportando}
+              disabled={!selectedIds.size || loading || exportando}
               onClick={exportarSeleccionados}
             >
               {exportando ? "Exportando..." : "Exportar"}
@@ -920,48 +939,52 @@ const fmtDate = (d) => {
                         </tr>
                       ) : (
                         patientsInGroup.map((p, idx) => {
-                          const k = `${p.nro || ""}||${p.documento || ""}`;
-                          const checked = !!exclState.get(k);
-                          const esPendiente = !!p.isPendiente;
+                        const k = `${p.nro || ""}||${p.documento || ""}`;
+                        const checked = !!exclState.get(k);
+                        const esPendiente = !!p.isPendiente;         // pendiente del periodo
+                        const esArrastrado = !!p.origenPendiente;    // viene de periodo anterior
 
-                          return (
-                            <tr key={`${k}||${idx}`}>
-                              <td>{fmtDate(p.fechaInicio)}</td>
-                              <td>{p.paciente || "-"}</td>
-                              <td>{p.documento || "-"}</td>
-                              <td style={{ textAlign: "right" }}>{fmtMoney(p.importe)}</td>
+                        return (
+                          <tr
+                            key={`${k}||${idx}`}
+                            style={
+                              esArrastrado
+                                ? { backgroundColor: "#FFF3CD" } // resaltado suave solo para arrastrados
+                                : {}
+                            }
+                          >
+                            <td>{fmtDate(p.fechaInicio)}</td>
+                            <td>{p.paciente || "-"}</td>
+                            <td>{p.documento || "-"}</td>
+                            <td style={{ textAlign: "right" }}>{fmtMoney(p.importe)}</td>
 
-                              {/* Check de "No liquidar":
-                                  - habilitado solo si NO es pendiente
-                                  - si ya es pendiente, queda marcado y bloqueado */}
-                              <td>
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  disabled={esPendiente || !isGroupEditable}
-                                  onChange={(e) =>
-                                    setExclude(p.nro, p.documento, e.target.checked)
-                                  }
-                                />
-                              </td>
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={esPendiente} // solo bloqueo si es pendiente del periodo actual
+                                onChange={(e) =>
+                                  setExclude(p.nro, p.documento, e.target.checked)
+                                }
+                              />
+                            </td>
 
-                              {/* Acción: solo aparece si YA es pendiente */}
-                              <td> 
-                                {esPendiente ? (
-                                  <button
-                                    type="button"
-                                    className="btn-primary btn-sm"
-                                    onClick={() => handleAnularPendiente(p)}
-                                  >
-                                    Anular
-                                  </button>
-                                ) : (
-                                  <span style={{ fontSize: 12, color: "#777" }}>-</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })
+                            <td>
+                              {esPendiente ? (
+                                <button
+                                  type="button"
+                                  className="btn-primary btn-sm"
+                                  onClick={() => handleAnularPendiente(p)}
+                                >
+                                  Anular
+                                </button>
+                              ) : (
+                                <span style={{ fontSize: 12, color: "#777" }}>-</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
                       )}
                 </tbody>
               </table>
