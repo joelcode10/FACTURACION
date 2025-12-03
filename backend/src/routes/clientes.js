@@ -786,40 +786,118 @@ router.post("/export", async (req, res) => {
       return !pendientesSet.has(key);
     });
 
-    if (!rows.length) {
-      return res.status(400).send("No hay datos para exportar.");
-    }
+  
 
     // Construimos detalles a partir del SP de export (detallado)
-    const details = [];
-    for (const r of filteredRows) {
-      // si el SP ya trae Sede, usamos esa; si no, calculamos del Nro
-      const { sedeCodigo, sedeNombre } = r["Sede"]
-        ? { sedeCodigo: null, sedeNombre: r["Sede"] }
-        : mapSedeFromNro(r.Nro);
+    // =========================================================
+// 1) Construir detalles a partir del SP (rango actual)
+// =========================================================
+const details = [];
+for (const r of filteredRows) {
+  const { sedeCodigo, sedeNombre } = r["Sede"]
+    ? { sedeCodigo: null, sedeNombre: r["Sede"] }
+    : mapSedeFromNro(r.Nro);
 
-      details.push({
-        nro: r.Nro,
-        fechaInicio: r["Fecha Inicio"],
-        protocolo: r["Protocolo"],
-        cliente: r["Cliente"] || r["RAZÓN SOCIAL"],
-        rucCliente: r["RUC DEL CLIENTE"],
-        razonSocial: r["RAZÓN SOCIAL"] || r["Cliente"],
-        unidadProduccion: r["Unidad de Producción"],
-        tipoEvaluacion: mapTipoEvaluacion(r["Tipo de Evaluación"] || r["Tipo de Examen"]),
-        condicionPago: r["Condición de Pago"] || r["Condicion de Pago"],
-        documento: r["Documento"] || r["N° Documento"],
-        paciente: r["Paciente"],
-        descripcionPrestacion: r["Descripción de la Prestación"],
-        importe: Number(r["Importe"] || r["Precio CB"] || 0),
-        sedeNombre,
-        evaluador: r["Evaluador"],
-      });
-    }
+  details.push({
+    nro: r.Nro,
+    fechaInicio: r["Fecha Inicio"],
+    protocolo: r["Protocolo"],
+    cliente: r["Cliente"] || r["RAZÓN SOCIAL"],
+    rucCliente: r["RUC DEL CLIENTE"],
+    razonSocial: r["RAZÓN SOCIAL"] || r["Cliente"],
+    unidadProduccion: r["Unidad de Producción"],
+    tipoEvaluacion: mapTipoEvaluacion(r["Tipo de Evaluación"] || r["Tipo de Examen"]),
+    condicionPago: r["Condición de Pago"] || r["Condicion de Pago"],
+    documento: r["Documento"] || r["N° Documento"],
+    paciente: r["Paciente"],
+    descripcionPrestacion: r["Descripción de la Prestación"],
+    importe: Number(r["Importe"] || r["Precio CB"] || 0),
+    sedeNombre,
+    evaluador: r["Evaluador"],
+  });
+}
 
-    if (!details.length) {
-      return res.status(400).send("No hay datos para exportar.");
-    }
+// =========================================================
+// 2) Pendientes arrastrados (periodos anteriores y mismos)
+//    — Igual que /process, para que entren al Excel
+// =========================================================
+const pendExtraResult = await poolFact
+  .request()
+  .input("DesdeActual", sql.Date, from)
+  .input("HastaActual", sql.Date, to)
+  .query(`
+    SELECT 
+      Nro,
+      Documento,
+      Paciente,
+      Cliente,
+      UnidadProduccion,
+      TipoEvaluacion,
+      Sede,
+      FechaInicio,
+      Importe,
+      CondicionPago,
+      Desde,
+      Hasta,
+      Estado
+    FROM dbo.LiquidacionClientesPendientes
+    WHERE Estado IN ('PENDIENTE','REACTIVADO')
+      AND (
+           (Desde = @DesdeActual AND Hasta = @HastaActual) -- mismos días
+        OR (Hasta < @HastaActual)                          -- meses anteriores
+      )
+  `);
+
+const pendientesExtra = pendExtraResult.recordset || [];
+
+// fusionar como en /process
+for (const p of pendientesExtra) {
+  const nro = (p.Nro || "").trim();
+  const doc = (p.Documento || "").trim();
+  const key = `${nro}||${doc}`;
+
+  // evitar duplicación si ya vino en SP
+  const yaExiste = details.some(
+    (d) => `${d.nro || ""}||${d.documento || ""}` === key
+  );
+  if (yaExiste) continue;
+
+  // respetar condición de pago
+  if (condicionPago && condicionPago !== "TODAS") {
+    const condPend = (p.CondicionPago || "").toString().trim().toUpperCase();
+    const condFiltro = condicionPago.toString().trim().toUpperCase();
+    if (condPend !== condFiltro) continue;
+  }
+
+  // fecha original del paciente
+  const fechaInicioPend =
+    p.FechaInicio || p.Desde || p.Hasta || null;
+
+  details.push({
+    nro,
+    fechaInicio: fechaInicioPend,
+    protocolo: null,
+    cliente: p.Cliente || "",
+    rucCliente: null,
+    razonSocial: p.Cliente || "",
+    unidadProduccion: p.UnidadProduccion || "",
+    tipoEvaluacion: mapTipoEvaluacion(p.TipoEvaluacion || ""),
+    condicionPago: p.CondicionPago || "",
+    documento: doc,
+    paciente: p.Paciente || "",
+    descripcionPrestacion: "(Pendiente arrastrado)",
+    importe: Number(p.Importe ?? 0),
+    sedeNombre: p.Sede || "",
+    evaluador: "",
+  });
+}
+
+// =========================================================
+// 3) Validación final (ya incluye SP + pendientes extra)
+// =========================================================
+if (!details.length) {
+  return res.status(400).send("No hay datos para exportar.");
+}
 
     // Agrupamos igual que en /process: Cliente + Unidad + Tipo + Sede
     const groupMap = new Map();

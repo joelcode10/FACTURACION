@@ -210,7 +210,30 @@ useEffect(() => {
 
     const rowsNormales = resp.rowsNormales || [];
     const rowsPendientes = resp.rowsPendientes || [];
+    // ⚠️ Separar pendientes "del periodo actual" vs "periodos anteriores"
+const rowsPendientesActual = rowsPendientes.filter(
+  (r) => Number(r.EsPendienteActual) === 1
+);
+const rowsPendientesPrevios = rowsPendientes.filter(
+  (r) => Number(r.EsPendienteActual) !== 1
+);
 
+// Claves para saber quién es pendiente ACTUAL y quién viene de periodo anterior
+const pendientesKeysActual = new Set(
+  rowsPendientesActual.map((r) => {
+    const nro = (r.Nro || r.nro || "").toString().trim();
+    const doc = (r.Documento || r.documento || "").toString().trim();
+    return `${nro}||${doc}`;
+  })
+);
+
+const pendientesKeysPrevios = new Set(
+  rowsPendientesPrevios.map((r) => {
+    const nro = (r.Nro || r.nro || "").toString().trim();
+    const doc = (r.Documento || r.documento || "").toString().trim();
+    return `${nro}||${doc}`;
+  })
+);
     // NUEVO: solo pendientes del período actual
   const pendientesKeys = new Set(
   rowsPendientes
@@ -227,64 +250,60 @@ useEffect(() => {
     //    b) filas pendientes que no vengan ya en el SP (caso raro)
     const combined = [];
  
-    // a) Normales (SP export) → los mapeamos al formato interno
-    rowsNormales.forEach((r) => {
-      const nro = (r.Nro || r.nro || "").trim();
-      const doc = (
-        r.Documento ||
-        r["Documento"] ||
-        r["N° Documento"] ||
-        ""
-      ).trim();
+   rowsNormales.forEach((r) => {
+  const nro = (r.Nro || r.nro || "").toString().trim();
+  const doc = (
+    r.Documento ||
+    r["Documento"] ||
+    r["N° Documento"] ||
+    ""
+  ).toString().trim();
 
-      const key = `${nro}||${doc}`;
-
-      combined.push({
-        nro,
-        fechaInicio: r["Fecha Inicio"] || r.FechaInicio || null,
-        cliente: grp.cliente,
-        rucCliente: r["RUC DEL CLIENTE"] || r.RucCliente || null,
-        unidadProduccion: grp.unidadProduccion,
-        tipoEvaluacion: grp.tipoEvaluacion,
-        condicionPago:
-          r["Condición de Pago"] || r["Condicion de Pago"] || "",
-        tipoDocumento: r["Tipo de Documento"] || "",
-        documento: doc,
-        paciente: r["Paciente"] || r.Paciente,
-        evaluador: r["Evaluador"] || r.Evaluador,
-        precioCb: Number(
-          r["Importe"] || r["Precio CB"] || r.Importe || 0
-        ),
-        sedeNombre: r["Sede"] || grp.sedeNombre,
-        isPendiente: pendientesKeys.has(key), 
-        origenPendiente: false,
-      });
-    });
-
-    // b) Pendientes que no salgan en el SP (por si acaso)
-rowsPendientes.forEach((r) => {
-  const nro = (r.Nro || "").trim();
-  const doc = (r.Documento || "").trim();
   const key = `${nro}||${doc}`;
 
-  const yaExiste = combined.some(
-    (x) => `${x.nro}||${x.documento}` === key
-  );
-  if (yaExiste) return;
-
-  // 🔹 Fallback robusto y ordenado para la fecha:
-  //    1) FechaInicio guardada por exclusión
-  //    2) Desde original del pendiente
-  //    3) Hasta original del pendiente
-  const fechaInicioPend =
-    r.FechaInicio ||
-    r.Desde ||
-    r.Hasta ||
-    null;
+  const esPendienteActual = pendientesKeysActual.has(key);
+  const vieneDePendientePrevio = pendientesKeysPrevios.has(key);
 
   combined.push({
     nro,
-    fechaInicio: fechaInicioPend,
+    fechaInicio: r["Fecha Inicio"] || r.FechaInicio || null,
+    cliente: grp.cliente,
+    rucCliente: r["RUC DEL CLIENTE"] || r.RucCliente || null,
+    unidadProduccion: grp.unidadProduccion,
+    tipoEvaluacion: grp.tipoEvaluacion,
+    condicionPago:
+      r["Condición de Pago"] || r["Condicion de Pago"] || "",
+    tipoDocumento: r["Tipo de Documento"] || "",
+    documento: doc,
+    paciente: r["Paciente"] || r.Paciente,
+    evaluador: r["Evaluador"] || r.Evaluador,
+    precioCb: Number(
+      r["Importe"] || r["Precio CB"] || r.Importe || 0
+    ),
+    sedeNombre: r["Sede"] || grp.sedeNombre,
+
+    // ⚠️ solo los pendientes del PERIODO ACTUAL se bloquean
+    isPendiente: esPendienteActual,
+    // ⚠️ viene de LiquidacionClientesPendientes de un periodo anterior
+    fromPendientePrevio: vieneDePendientePrevio,
+  });
+});
+    rowsPendientes.forEach((r) => {
+  const nro = (r.Nro || "").toString().trim();
+  const doc = (r.Documento || "").toString().trim();
+  const key = `${nro}||${doc}`;
+
+  const yaExiste = combined.some(
+    (x) => `${x.nro || ""}||${x.documento || ""}` === key
+  );
+  if (yaExiste) return;
+
+  const esPendienteActual = Number(r.EsPendienteActual) === 1;
+  const vieneDePendientePrevio = !esPendienteActual;
+
+  combined.push({
+    nro,
+    fechaInicio: r.FechaInicio || null,
     cliente: r.Cliente || grp.cliente,
     rucCliente: r.RucCliente || null,
     unidadProduccion: r.UnidadProduccion || grp.unidadProduccion,
@@ -297,9 +316,9 @@ rowsPendientes.forEach((r) => {
     precioCb: Number(r.Importe || 0),
     sedeNombre: r.Sede || grp.sedeNombre,
 
-    // ⚠️ Ambos flags necesarios
-    isPendiente: true,
-    origenPendiente: true,
+    // ⚠️ igual que arriba:
+    isPendiente: esPendienteActual,       // solo bloqueamos si es del periodo actual
+    fromPendientePrevio: vieneDePendientePrevio, // pero sabemos que viene de antes
   });
 });
     // 4) Guardamos el detalle completo (normales + pendientes) para este grupo
@@ -337,17 +356,22 @@ rowsPendientes.forEach((r) => {
 
   for (const r of rows) {
     const k = `${r.paciente || ""}||${r.documento || ""}||${r.nro || ""}`;
+
     const prev =
       acc.get(k) || {
         paciente: r.paciente,
         documento: r.documento,
         nro: r.nro,
         importe: 0,
-        isPendiente: false,      // pendiente EN el periodo actual
-        origenPendiente: false,  // arrastrado de otro periodo
+        // ⚠️ Pendiente EN el periodo actual
+        isPendiente: false,
+        // ⚠️ Viene arrastrado de otro periodo (tabla pendientes)
+        origenPendiente: false,
+        // ⚠️ Fecha de inicio original (mínima de sus filas)
         fechaInicio: r.fechaInicio || null,
       };
 
+    // acumular importe
     prev.importe += Number(r.precioCb || 0);
 
     // si alguna prestación está marcada como pendiente actual
@@ -356,11 +380,12 @@ rowsPendientes.forEach((r) => {
     }
 
     // si alguna prestación viene de pendientes de periodos anteriores
-    if (r.origenPendiente) {
+    if (r.origenPendiente || r.fromPendientePrevio) {
+      // (soporte por si el backend usa fromPendientePrevio)
       prev.origenPendiente = true;
     }
 
-    // fecha mínima por seguridad
+    // mantener SIEMPRE la fecha mínima (la más antigua)
     if (
       r.fechaInicio &&
       (!prev.fechaInicio ||
@@ -931,61 +956,70 @@ const fmtDate = (d) => {
                   </tr>
                 </thead>
                 <tbody>
-                      {patientsInGroup.length === 0 ? (
-                        <tr>
-                          <td className="table-empty" colSpan={5}>
-                            Sin pacientes.
+                  {patientsInGroup.length === 0 ? (
+                    <tr>
+                      <td className="table-empty" colSpan={5}>
+                        Sin pacientes.
+                      </td>
+                    </tr>
+                  ) : (
+                    patientsInGroup.map((p, idx) => {
+                      const k = `${p.nro || ""}||${p.documento || ""}`;
+                      const checked = !!exclState.get(k);
+
+                      const esPendiente = !!p.isPendiente;         // pendiente del periodo actual
+                      const esArrastrado = !!p.origenPendiente;    // viene de periodo anterior
+
+                      return (
+                        <tr
+                          key={`${k}||${idx}`}
+                          style={
+                            esArrastrado
+                              ? { backgroundColor: "#FFF3CD" } // resaltado suave solo para arrastrados
+                              : {}
+                          }
+                        >
+                          {/* ✅ Fecha de inicio original por paciente */}
+                          <td>{fmtDate(p.fechaInicio)}</td>
+
+                          <td>{p.paciente || "-"}</td>
+                          <td>{p.documento || "-"}</td>
+                          <td style={{ textAlign: "right" }}>{fmtMoney(p.importe)}</td>
+
+                          {/* Check "No liquidar":
+                              - bloqueado solo si es pendiente del periodo actual
+                              - para arrastrados viene habilitado para liquidar directamente */}
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={esPendiente} // solo bloqueo si ES pendiente actual
+                              onChange={(e) =>
+                                setExclude(p.nro, p.documento, e.target.checked)
+                              }
+                            />
+                          </td>
+
+                          {/* Botón Anular:
+                              - solo aparece para pendientes del periodo actual
+                              - para arrastrados mostramos "-" (no necesitan anularse) */}
+                          <td>
+                            {esPendiente ? (
+                              <button
+                                type="button"
+                                className="btn-primary btn-sm"
+                                onClick={() => handleAnularPendiente(p)}
+                              >
+                                Anular
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: 12, color: "#777" }}>-</span>
+                            )}
                           </td>
                         </tr>
-                      ) : (
-                        patientsInGroup.map((p, idx) => {
-                        const k = `${p.nro || ""}||${p.documento || ""}`;
-                        const checked = !!exclState.get(k);
-                        const esPendiente = !!p.isPendiente;         // pendiente del periodo
-                        const esArrastrado = !!p.origenPendiente;    // viene de periodo anterior
-
-                        return (
-                          <tr
-                            key={`${k}||${idx}`}
-                            style={
-                              esArrastrado
-                                ? { backgroundColor: "#FFF3CD" } // resaltado suave solo para arrastrados
-                                : {}
-                            }
-                          >
-                            <td>{fmtDate(p.fechaInicio)}</td>
-                            <td>{p.paciente || "-"}</td>
-                            <td>{p.documento || "-"}</td>
-                            <td style={{ textAlign: "right" }}>{fmtMoney(p.importe)}</td>
-
-                            <td>
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                disabled={esPendiente} // solo bloqueo si es pendiente del periodo actual
-                                onChange={(e) =>
-                                  setExclude(p.nro, p.documento, e.target.checked)
-                                }
-                              />
-                            </td>
-
-                            <td>
-                              {esPendiente ? (
-                                <button
-                                  type="button"
-                                  className="btn-primary btn-sm"
-                                  onClick={() => handleAnularPendiente(p)}
-                                >
-                                  Anular
-                                </button>
-                              ) : (
-                                <span style={{ fontSize: 12, color: "#777" }}>-</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })
-                      )}
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
