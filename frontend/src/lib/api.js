@@ -111,12 +111,12 @@ export async function anularPendiente({ nro, documento }) {
   });
 }
 /** 📤 Exportar Excel de liquidaciones seleccionadas */
-export async function exportLiquidaciones({ from, to, condicionPago, selectedIds }) {
+export async function exportLiquidaciones({ from, to, condicionPago, selectedIds, estadosPrestacion,}) {
   const url = `${API_BASE}/api/clientes/export`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to, condicionPago, selectedIds }),
+    body: JSON.stringify({ from, to, condicionPago, selectedIds, estadosPrestacion,}),
   });
   if (!res.ok) {
     const t = await res.text();

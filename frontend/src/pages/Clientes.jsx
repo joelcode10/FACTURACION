@@ -16,7 +16,9 @@ export default function Clientes() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [condicionPago, setCondicionPago] = useState("TODAS");
-  const [filtroFirma, setFiltroFirma] = useState("TODAS"); // TODAS | CON_FIRMA | SIN_FIRMA
+  // Estados de prestación seleccionados (multi-check)
+  const [estadosSeleccionados, setEstadosSeleccionados] = useState([]); 
+  const [dropdownEstadosOpen, setDropdownEstadosOpen] = useState(false);
   const [liquidando, setLiquidando] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -47,26 +49,37 @@ const [anulandoPendienteKey, setAnulandoPendienteKey] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailGroupId, setDetailGroupId] = useState(null);
   const [exclState, setExclState] = useState(new Map()); // key: `${nro}||${doc}` -> bool
-  // 🔹 1) Cargar estado guardado al montar el módulo
+  
+  useEffect(() => {
+  // Cuando se actualizan los filtros que vienen del backend (clientes, tipos, sedes, estados),
+  // reseteamos los filtros visuales a "sin filtro".
+  setFCliente("TODOS");
+  setFTipo("TODOS");
+  setFSede("TODOS");
+
+  // Esto deja el filtro de estado de prestación en "mostrar todos"
+  setEstadosSeleccionados([]);
+}, [filters]);
+  // Cargar TODO el estado guardado al montar el módulo
 useEffect(() => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
+
     const saved = JSON.parse(raw);
 
     if (saved.from) setFrom(saved.from);
     if (saved.to) setTo(saved.to);
     if (saved.condicionPago) setCondicionPago(saved.condicionPago);
+
     if (Array.isArray(saved.groups)) setGroups(saved.groups);
     if (saved.detailsByGroupId) setDetailsByGroupId(saved.detailsByGroupId);
     if (saved.filters) setFilters(saved.filters);
   } catch (e) {
-    console.error("Error restaurando estado de liquidación:", e);
+    console.error("Error restaurando estado:", e);
   }
 }, []);
-
-// 🔹 2) Guardar cada vez que cambian filtros y datos
-useEffect(() => {
+ useEffect(() => {
   try {
     const data = {
       from,
@@ -78,16 +91,9 @@ useEffect(() => {
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch (e) {
-    console.error("Error guardando estado de liquidación:", e);
+    console.error("Error guardando estado:", e);
   }
 }, [from, to, condicionPago, groups, detailsByGroupId, filters]);
-  useEffect(() => {
-    // reset filtros UI cuando llegan nuevos filtros
-    setFCliente("TODOS");
-    setFTipo("TODOS");
-    setFSede("TODOS");
-  }, [filters]);
-
   async function handleProcess(e) {
     e?.preventDefault?.();
     setError("");
@@ -122,41 +128,32 @@ useEffect(() => {
     }
   }
 
-  // grupos filtrados por UI (cliente, tipo, sede, firma)
   const viewGroups = useMemo(() => {
-    return groups.filter((g) => {
-      // cliente
-      if (fCliente !== "TODOS" && g.cliente !== fCliente) return false;
-      // tipo evaluación
-      if (fTipo !== "TODOS" && g.tipoEvaluacion !== fTipo) return false;
-      // sede (se mira en el detalle)
-      const rows = detailsByGroupId[g.id] || [];
-      if (fSede !== "TODOS") {
-        const ok = rows.some((r) => r.sedeNombre === fSede);
-        if (!ok) return false;
-      }
-      // filtro de firma
-      if (filtroFirma !== "TODAS") {
-        if (!rows.length) return false;
+  return groups.filter((g) => {
+    // cliente
+    if (fCliente !== "TODOS" && g.cliente !== fCliente) return false;
+    // tipo evaluación
+    if (fTipo !== "TODOS" && g.tipoEvaluacion !== fTipo) return false;
 
-        const haySinFirma = rows.some(
-          (r) =>
-            !r.evaluador ||
-            r.evaluador.toString().toUpperCase() === "SIN FIRMA"
-        );
-        const todoConFirma = rows.every(
-          (r) =>
-            r.evaluador &&
-            r.evaluador.toString().toUpperCase() !== "SIN FIRMA"
-        );
+    const rows = detailsByGroupId[g.id] || [];
 
-        if (filtroFirma === "SIN_FIRMA" && !haySinFirma) return false;
-        if (filtroFirma === "CON_FIRMA" && !todoConFirma) return false;
-      }
+    // sede
+    if (fSede !== "TODOS") {
+      const ok = rows.some((r) => r.sedeNombre === fSede);
+      if (!ok) return false;
+    }
 
-      return true;
-    });
-  }, [groups, detailsByGroupId, fCliente, fTipo, fSede, filtroFirma]);
+    // 🔹 NUEVO: filtro por Estado de la prestación (multi-check)
+    if (estadosSeleccionados.length > 0) {
+      const okEstado = rows.some((r) =>
+        estadosSeleccionados.includes(r.estadoPrestacion || "")
+      );
+      if (!okEstado) return false;
+    }
+
+    return true;
+  });
+}, [groups, detailsByGroupId, fCliente, fTipo, fSede, estadosSeleccionados]);
 
   // totales (sobre los seleccionados visibles)
   const subtotal = useMemo(() => {
@@ -281,6 +278,7 @@ const pendientesKeysPrevios = new Set(
       r["Importe"] || r["Precio CB"] || r.Importe || 0
     ),
     sedeNombre: r["Sede"] || grp.sedeNombre,
+    estadoPrestacion: r["Estado de la Prestación"] || r.estadoPrestacion || "",
 
     // ⚠️ solo los pendientes del PERIODO ACTUAL se bloquean
     isPendiente: esPendienteActual,
@@ -318,6 +316,7 @@ const pendientesKeysPrevios = new Set(
 
     // ⚠️ igual que arriba:
     isPendiente: esPendienteActual,       // solo bloqueamos si es del periodo actual
+    estadoPrestacion: r.EstadoPrestacion || "Pendiente",
     fromPendientePrevio: vieneDePendientePrevio, // pero sabemos que viene de antes
   });
 });
@@ -385,6 +384,7 @@ const pendientesKeysPrevios = new Set(
       prev.origenPendiente = true;
     }
 
+    
     // mantener SIEMPRE la fecha mínima (la más antigua)
     if (
       r.fechaInicio &&
@@ -610,6 +610,7 @@ async function liquidarSeleccionados() {
       to,
       condicionPago,
       selectedIds: selectedIdsArr,
+      estadosPrestacion: estadosSeleccionados,
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -743,15 +744,56 @@ const fmtDate = (d) => {
               ))}
             </select>
             {/* Filtro de firma */}
-            <select
-              className="form-select"
-              value={filtroFirma}
-              onChange={(e) => setFiltroFirma(e.target.value)}
-            >
-              <option value="TODAS">Todas las firmas</option>
-              <option value="CON_FIRMA">Solo con firma</option>
-              <option value="SIN_FIRMA">Solo sin firma</option>
-            </select>
+            {/* Filtro de Estado de la prestación (multi-check) */}
+            <div className="estado-filter">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setDropdownEstadosOpen((prev) => !prev)}
+              >
+                Estado de la prestación ▾
+              </button>
+
+              {dropdownEstadosOpen && (
+                <div className="estado-dropdown">
+                  {(filters.estadosPrestacion || []).map((est) => {
+                    const checked = estadosSeleccionados.includes(est);
+
+                    return (
+                      <label key={est} className="estado-item">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const { checked } = e.target;
+                            setEstadosSeleccionados((prev) => {
+                              if (checked) {
+                                // agregar
+                                if (prev.includes(est)) return prev;
+                                return [...prev, est];
+                              } else {
+                                // quitar
+                                const next = prev.filter((x) => x !== est);
+                                return next;
+                              }
+                            });
+                          }}
+                        />
+                        {est}
+                      </label>
+                    );
+                  })}
+                  {/* Opción rápida para limpiar filtro */}
+                  <button
+                    type="button"
+                    className="estado-clear-btn"
+                    onClick={() => setEstadosSeleccionados([])}
+                  >
+                    Mostrar todos
+                  </button>
+                </div>
+              )}
+            </div>
           </div> 
         </div><br />
 
@@ -981,7 +1023,6 @@ const fmtDate = (d) => {
                         >
                           {/* ✅ Fecha de inicio original por paciente */}
                           <td>{fmtDate(p.fechaInicio)}</td>
-
                           <td>{p.paciente || "-"}</td>
                           <td>{p.documento || "-"}</td>
                           <td style={{ textAlign: "right" }}>{fmtMoney(p.importe)}</td>

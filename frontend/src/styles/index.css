@@ -205,194 +205,149 @@ button {
   background: #f3f4f6;
 }
 
-/* ====== SIDEBAR DE MÓDULOS (MÁS COMPACTO) ====== */
+/* ===== Sidebar estilo UTP (más sobrio) ===== */
 .modules-sidebar {
-  width: 140px; /* Reducido de 180px a 140px */
-  flex-shrink: 0;
-  background: #0f1729;
-  padding: 0.5rem 0;
-  border-radius: 0;
+  width: 220px;                        /* un poco más fino */
+  background: #020617;                 /* azul muy oscuro sólido */
+  color: #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(15, 23, 42, 0.9);
 }
 
 .modules-card {
-  background: transparent;
+  background: transparent;             /* sin tarjeta grande */
   border-radius: 0;
-  padding: 0;
   box-shadow: none;
+  padding: 16px 10px 10px;
 }
 
 .modules-title {
-  display: none;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9ca3af;
+  margin: 0 0 10px;
 }
 
 .modules-subtitle {
-  display: none;
-}
-
-/* ====== TARJETAS DE MÓDULO (MÁS COMPACTAS) ====== */
-.module-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  margin-top: 0;
-}
-
-.module-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem; /* Reducido de 0.5rem */
-  padding: 0.9rem 0.4rem; /* Reducido padding */
-  border-radius: 0;
-  background: transparent;
-  border: none;
-  border-left: 3px solid transparent;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-  color: #9ca3af;
-}
-
-.module-card:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: #ffffff;
-  border-left-color: #3b82f6;
-}
-
-.module-card.selected {
-  background: rgba(37, 99, 235, 0.1);
-  border-left-color: #2563eb;
-  color: #ffffff;
-}
-
-.module-icon {
-  width: 28px; /* Reducido de 32px */
-  height: 28px;
-  border-radius: 6px; /* Reducido de 8px */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  color: inherit;
-  font-size: 1.1rem; /* Reducido de 1.2rem */
-  background: transparent;
-  flex-shrink: 0;
-}
-
-.module-icon.lc,
-.module-icon.hhmm,
-.module-icon.aud,
-.module-icon.mant,
-.module-icon.val,
-.module-icon.rc,
-.module-icon.hist {
-  background: transparent;
-  color: inherit;
-}
-
-/* Iconos con emojis más pequeños */
-.module-icon.lc::before { content: "📊"; font-size: 1rem; }
-.module-icon.hhmm::before { content: "💰"; font-size: 1rem; }
-.module-icon.aud::before { content: "🔍"; font-size: 1rem; }
-.module-icon.mant::before { content: "⚙️"; font-size: 1rem; }
-.module-icon.val::before { content: "💵"; font-size: 1rem; }
-.module-icon.rc::before { content: "👥"; font-size: 1rem; }
-.module-icon.hist::before { content: "📋"; font-size: 1rem; }
-
-.module-info-title {
-  font-size: 0.7rem; /* Reducido de 0.75rem */
-  font-weight: 500;
-  line-height: 1.1;
-  text-align: center;
-  color: inherit;
-  max-width: 100%;
-  word-wrap: break-word;
-  hyphens: auto;
-}
-
-.module-info-subtitle {
-  display: none;
-}
-/* Eliminamos los colores de fondo de los iconos */
-.module-icon.lc,
-.module-icon.hhmm,
-.module-icon.aud,
-.module-icon.mant,
-.module-icon.val,
-.module-icon.rc,
-.module-icon.hist {
-  background: transparent;
-  color: inherit;
-}
-
-/* Usamos iconos Unicode o emojis simples */
-.module-icon.lc::before { content: "📊"; }
-.module-icon.hhmm::before { content: "💰"; }
-.module-icon.aud::before { content: "🔍"; }
-.module-icon.mant::before { content: "⚙️"; }
-.module-icon.val::before { content: "💵"; }
-.module-icon.rc::before { content: "👥"; }
-.module-icon.hist::before { content: "📋"; }
-
-.module-info-title {
-  font-size: 0.75rem; /* Texto más pequeño */
-  font-weight: 500;
-  line-height: 1.2;
-  text-align: center;
-  color: inherit;
-}
-
-.module-info-subtitle {
-  display: none;
-}
-/* colores distintos por módulo (sin cambios) */
-.module-icon.lc { background: #2563eb; }
-.module-icon.hhmm { background: #0ea5e9; }
-.module-icon.aud { background: #8b5cf6; }
-.module-icon.mant { background: #16a34a; }
-.module-icon.val { background: #f97316; }
-.module-icon.rc { background: #0f766e; }
-.module-icon.hist { background: #dc2626; }
-
-.module-info-title {
-  font-size: 0.85rem; /* Era 0.95rem */
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.module-info-subtitle {
-  display: none; /* Ocultamos el subtítulo de cada módulo */
-}
-/* colores distintos por módulo (puedes ajustarlos) */
-.module-icon.lc {
-  background: #2563eb;
-}
-.module-icon.hhmm {
-  background: #0ea5e9;
-}
-.module-icon.aud {
-  background: #8b5cf6;
-}
-.module-icon.mant {
-  background: #16a34a;
-}
-.module-icon.val {
-  background: #f97316;
-}
-.module-icon.rc {
-  background: #0f766e;
-}
-
-.module-info-title {
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-
-.module-info-subtitle {
-  font-size: 0.8rem;
+  margin: 0 0 6px;
+  font-size: 0.7rem;
   color: #6b7280;
 }
 
+.module-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Cada item del menú */
+.module-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
+}
+
+/* Barrita vertical tipo UTP (aparece sólo en activo) */
+.module-card::before {
+  content: "";
+  position: absolute;
+  inset-block: 6px;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.module-card:hover {
+  background: rgba(15, 23, 42, 0.85);
+  transform: translateX(1px);
+}
+
+.module-card.selected {
+  background: #0f172a;                 /* un poco más claro que el fondo */
+  color: #ffffff;
+}
+
+.module-card.selected::before {
+  background: #f97316;                 /* acento (puedes cambiarlo) */
+}
+
+/* Icono cuadrado sobrio */
+.module-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #e5e7eb;
+  flex-shrink: 0;
+}
+
+/* Letras serias por módulo, sin emojis de colores */
+.module-icon.lc::before {
+  content: "LC";   /* Liquidación Clientes */
+}
+
+.module-icon.hhmm::before {
+  content: "HM";   /* Honorarios Médicos */
+}
+
+.module-icon.aud::before {
+  content: "AU";   /* Auditorías */
+}
+
+.module-icon.mant::before {
+  content: "MT";   /* Mantenimiento */
+}
+
+.module-icon.val::before {
+  content: "VL";   /* Valorización */
+}
+
+.module-icon.rc::before {
+  content: "US";   /* Usuarios y accesos */
+}
+
+.module-icon.hist::before {
+  content: "HI";   /* Histórico */
+}
+
+/* Texto al lado del icono */
+.module-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.module-info-title {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+/* Si quieres un menú ultra minimal, puedes ocultar el subtítulo */
+.module-info-subtitle {
+  font-size: 0.7rem;
+  color: #9ca3af;
+}
 /* ====== CONTENIDO DE MÓDULO (DERECHA) ====== */
 /* ====== CONTENIDO DE MÓDULO (OPTIMIZADO) ====== */
 .module-content {
@@ -1216,4 +1171,38 @@ button {
   to {
     transform: rotate(360deg);
   }
+}
+.estado-filter {
+  position: relative;
+}
+
+.estado-dropdown {
+  position: absolute;
+  top: 110%;
+  left: 0;
+  z-index: 40;
+  background: #ffffff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 220px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+}
+
+.estado-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 2px 0;
+}
+
+.estado-clear-btn {
+  margin-top: 6px;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  color: #007bff;
+  cursor: pointer;
+  padding: 0;
 }

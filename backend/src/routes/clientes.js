@@ -552,11 +552,13 @@ if (grp.estadoLiquidado === "LIQUIDADO") {
     const clientesSet = new Set();
     const tiposSet = new Set();
     const sedesSet = new Set();
+    const estadosPrestacionSet = new Set();
 
     for (const d of details) {
       if (d.cliente) clientesSet.add(d.cliente);
       if (d.tipoEvaluacion) tiposSet.add(d.tipoEvaluacion);
       if (d.sedeNombre) sedesSet.add(d.sedeNombre);
+      if (d.estadoPrestacion) estadosPrestacionSet.add(d.estadoPrestacion);
     }
 
     return res.json({
@@ -567,6 +569,7 @@ if (grp.estadoLiquidado === "LIQUIDADO") {
         clientes: Array.from(clientesSet).sort(),
         tipos: Array.from(tiposSet).sort(),
         sedes: Array.from(sedesSet).sort(),
+        estadosPrestacion: Array.from(estadosPrestacionSet).sort(),
       },
     });
   } catch (err) {
@@ -734,14 +737,15 @@ router.post("/exclusions", async (req, res) => {
  */
 router.post("/export", async (req, res) => {
   try {
-    const { from, to, condicionPago, selectedIds } = req.body;
-
+    const { from, to, condicionPago, selectedIds, estadosPrestacion, } = req.body;
+    const estadosFiltro = Array.isArray(estadosPrestacion)
+    ? estadosPrestacion.filter((e) => e).map((e) => e.toString().trim().toUpperCase())
+    : [];
     if (!from || !to) {
       return res
         .status(400)
         .send("Debe indicar fecha desde y hasta para exportar.");
     }
-
     const idsSet = new Set(selectedIds || []);
 
     const pool = await getPoolCbmedic();
@@ -778,16 +782,28 @@ router.post("/export", async (req, res) => {
       })
     );
 
-    // Aplicamos filtro al detalle de exportación
     const filteredRows = rows.filter((r) => {
       const nro = (r.Nro || "").trim();
       const doc = (r["Documento"] || r["N° Documento"] || "").trim();
       const key = `${nro}||${doc}`;
-      return !pendientesSet.has(key);
+
+      // 1) Nunca exportar lo marcado como NO liquidar en este periodo
+      if (pendientesSet.has(key)) return false;
+
+      // 2) Si el usuario filtró por estado de prestación, respetarlo también aquí
+      if (estadosFiltro.length > 0) {
+        const estadoRow = (r["Estado de la Prestación"] || "")
+          .toString()
+          .trim()
+          .toUpperCase();
+
+        if (!estadosFiltro.includes(estadoRow)) {
+          return false;
+        }
+      }
+
+      return true;
     });
-
-  
-
     // Construimos detalles a partir del SP de export (detallado)
     // =========================================================
 // 1) Construir detalles a partir del SP (rango actual)
@@ -813,7 +829,7 @@ for (const r of filteredRows) {
     descripcionPrestacion: r["Descripción de la Prestación"],
     importe: Number(r["Importe"] || r["Precio CB"] || 0),
     sedeNombre,
-    evaluador: r["Evaluador"],
+    estadoPrestacion: r["Estado de la Prestación"] || "",
   });
 }
 
@@ -874,35 +890,51 @@ for (const p of pendientesExtra) {
     p.FechaInicio || p.Desde || p.Hasta || null;
 
   details.push({
-    nro,
-    fechaInicio: fechaInicioPend,
-    protocolo: null,
-    cliente: p.Cliente || "",
-    rucCliente: null,
-    razonSocial: p.Cliente || "",
-    unidadProduccion: p.UnidadProduccion || "",
-    tipoEvaluacion: mapTipoEvaluacion(p.TipoEvaluacion || ""),
-    condicionPago: p.CondicionPago || "",
-    documento: doc,
-    paciente: p.Paciente || "",
-    descripcionPrestacion: "(Pendiente arrastrado)",
-    importe: Number(p.Importe ?? 0),
-    sedeNombre: p.Sede || "",
-    evaluador: "",
-  });
+  nro,
+  fechaInicio: fechaInicioPend,
+  protocolo: null,
+  cliente: p.Cliente || "",
+  rucCliente: null,
+  razonSocial: p.Cliente || "",
+  unidadProduccion: p.UnidadProduccion || "",
+  tipoEvaluacion: mapTipoEvaluacion(p.TipoEvaluacion || ""),
+  condicionPago: p.CondicionPago || "",
+  documento: doc,
+  paciente: p.Paciente || "",
+  descripcionPrestacion: "(Pendiente arrastrado)",
+  importe: Number(p.Importe ?? 0),
+  sedeNombre: p.Sede || "",
+  evaluador: "",
+  estadoPrestacion: "PENDIENTE",   // 👈 NUEVO: para que entre en el filtro por estado
+});
 }
 
 // =========================================================
 // 3) Validación final (ya incluye SP + pendientes extra)
 // =========================================================
-if (!details.length) {
+// =========================================================
+// 3) Filtro FINAL por Estado de la Prestación (a nivel fila)
+// =========================================================
+let finalDetails = details;
+
+if (estadosFiltro.length > 0) {
+  finalDetails = details.filter((d) => {
+    const est = (d.estadoPrestacion || "")
+      .toString()
+      .trim()
+      .toUpperCase();
+    return estadosFiltro.includes(est);
+  });
+}
+
+if (!finalDetails.length) {
   return res.status(400).send("No hay datos para exportar.");
 }
 
     // Agrupamos igual que en /process: Cliente + Unidad + Tipo + Sede
-    const groupMap = new Map();
+      const groupMap = new Map();
 
-    for (const row of details) {
+      for (const row of finalDetails) {
       const key =
         (row.cliente || "") +
         "||" +
@@ -994,7 +1026,7 @@ if (!details.length) {
         "Razón social",
         "Sede",
         "Unidad de producción",
-        "Evaluador",
+        "Estado prestación",
       ];
       const headerRow = ws.addRow(header);
 
@@ -1030,7 +1062,7 @@ if (!details.length) {
           r.razonSocial,
           r.sedeNombre,
           r.unidadProduccion,
-          r.evaluador,
+          r.estadoPrestacion,
         ]);
       });
 
