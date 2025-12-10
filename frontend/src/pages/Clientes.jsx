@@ -129,56 +129,39 @@ useEffect(() => {
   }
 
   const viewGroups = useMemo(() => {
-  return groups
-    .map((g) => {
-      const rows = detailsByGroupId[g.id] || [];
+  return groups.filter((g) => {
+    // cliente
+    if (fCliente !== "TODOS" && g.cliente !== fCliente) return false;
+    // tipo evaluación
+    if (fTipo !== "TODOS" && g.tipoEvaluacion !== fTipo) return false;
 
-      // 1) Filtro por sede a nivel de detalle
-      let filteredRows = rows;
-      if (fSede !== "TODOS") {
-        filteredRows = filteredRows.filter((r) => r.sedeNombre === fSede);
-      }
+    const rows = detailsByGroupId[g.id] || [];
 
-      // 2) Filtro por estado de prestación (multi-check)
-      if (estadosSeleccionados.length > 0) {
-        filteredRows = filteredRows.filter((r) =>
-          estadosSeleccionados.includes(r.estadoPrestacion || "")
-        );
-      }
+    // sede
+    if (fSede !== "TODOS") {
+      const ok = rows.some((r) => r.sedeNombre === fSede);
+      if (!ok) return false;
+    }
 
-      // Si después de filtrar no hay filas, este grupo no se muestra
-      if (!filteredRows.length) return null;
-
-      // 3) Importe recalculado solo con las filas visibles
-      const importeVisible = filteredRows.reduce(
-        (acc, r) => acc + Number(r.precioCb || 0),
-        0
+    // 🔹 NUEVO: filtro por Estado de la prestación (multi-check)
+    if (estadosSeleccionados.length > 0) {
+      const okEstado = rows.some((r) =>
+        estadosSeleccionados.includes(r.estadoPrestacion || "")
       );
+      if (!okEstado) return false;
+    }
 
-      return {
-        ...g,
-        importeVisible,
-      };
-    })
-    .filter((g) => g !== null)
-    .filter((g) => {
-      // filtros de cliente y tipo (a nivel grupo)
-      if (fCliente !== "TODOS" && g.cliente !== fCliente) return false;
-      if (fTipo !== "TODOS" && g.tipoEvaluacion !== fTipo) return false;
-      return true;
-    });
+    return true;
+  });
 }, [groups, detailsByGroupId, fCliente, fTipo, fSede, estadosSeleccionados]);
 
   // totales (sobre los seleccionados visibles)
   const subtotal = useMemo(() => {
-  let s = 0;
-  for (const g of viewGroups)
-    if (selectedIds.has(g.id)) {
-      const monto = typeof g.importeVisible === "number" ? g.importeVisible : g.importe;
-      s += Number(monto || 0);
-    }
-  return s;
-}, [viewGroups, selectedIds]);
+    let s = 0;
+    for (const g of viewGroups)
+      if (selectedIds.has(g.id)) s += Number(g.importe || 0);
+    return s;
+  }, [viewGroups, selectedIds]);
 
   function toggleSelect(id) {
     setSelectedIds((prev) => {
@@ -367,42 +350,42 @@ const pendientesKeysPrevios = new Set(
 
   const patientsInGroup = useMemo(() => {
   if (!detailGroupId) return [];
-  
-  const baseRows = detailsByGroupId[detailGroupId] || [];
-
-  // 🔹 Aplicar filtro de estado de prestación también al detalle
-  const rows =
-    estadosSeleccionados.length > 0
-      ? baseRows.filter((r) =>
-          estadosSeleccionados.includes(r.estadoPrestacion || "")
-        )
-      : baseRows;
-
+  const rows = detailsByGroupId[detailGroupId] || [];
   const acc = new Map();
 
   for (const r of rows) {
     const k = `${r.paciente || ""}||${r.documento || ""}||${r.nro || ""}`;
+
     const prev =
       acc.get(k) || {
         paciente: r.paciente,
         documento: r.documento,
         nro: r.nro,
         importe: 0,
-        isPendiente: false,      // pendiente EN el periodo actual
-        origenPendiente: false,  // arrastrado de otro periodo
+        // ⚠️ Pendiente EN el periodo actual
+        isPendiente: false,
+        // ⚠️ Viene arrastrado de otro periodo (tabla pendientes)
+        origenPendiente: false,
+        // ⚠️ Fecha de inicio original (mínima de sus filas)
         fechaInicio: r.fechaInicio || null,
       };
 
+    // acumular importe
     prev.importe += Number(r.precioCb || 0);
 
+    // si alguna prestación está marcada como pendiente actual
     if (r.isPendiente) {
       prev.isPendiente = true;
     }
 
-    if (r.origenPendiente) {
+    // si alguna prestación viene de pendientes de periodos anteriores
+    if (r.origenPendiente || r.fromPendientePrevio) {
+      // (soporte por si el backend usa fromPendientePrevio)
       prev.origenPendiente = true;
     }
 
+    
+    // mantener SIEMPRE la fecha mínima (la más antigua)
     if (
       r.fechaInicio &&
       (!prev.fechaInicio ||
@@ -415,7 +398,7 @@ const pendientesKeysPrevios = new Set(
   }
 
   return Array.from(acc.values());
-}, [detailGroupId, detailsByGroupId, estadosSeleccionados]);
+}, [detailGroupId, detailsByGroupId]);
 // Grupo actual y si es editable (solo cuando estadoLiquidado === "NO")
   const grupoActual = useMemo(
     () => groups.find((g) => g.id === detailGroupId) || null,
@@ -434,6 +417,7 @@ const pendientesKeysPrevios = new Set(
   }
   async function handleAnularPendiente(p) {
   try {
+    // 1) Buscamos datos en las filas originales del grupo
     const rows = detailsByGroupId[detailGroupId] || [];
 
     let nro = p.nro;
@@ -446,6 +430,7 @@ const pendientesKeysPrevios = new Set(
         const docP   = (p.documento || "").trim();
         const pacRow = (r.paciente || "").trim();
         const pacP   = (p.paciente || "").trim();
+
         return docRow && docRow === docP && pacRow === pacP;
       });
 
@@ -455,34 +440,16 @@ const pendientesKeysPrevios = new Set(
       }
     }
 
+    // 2) Si aún falta algo, no podemos anular
     if (!nro || !documento) {
       alert("No se puede anular: falta Nro o Documento.");
       return;
     }
 
-    // 1️⃣ Actualizamos en BD
+    // 3) Llamamos al backend
     await anularPendiente({ nro, documento });
 
-    // 2️⃣ Actualizamos detalle local: ya NO es pendiente
-    setDetailsByGroupId((prev) => {
-      const copy = { ...prev };
-      const current = copy[detailGroupId] || [];
-      copy[detailGroupId] = current.map((r) => {
-        const rnro = (r.nro || r.Nro || "").trim();
-        const rdoc = (r.documento || r.Documento || "").trim();
-        if (rnro === nro && rdoc === documento) {
-          return {
-            ...r,
-            isPendiente: false,
-            origenPendiente: false, // deja de ser “arrastrado pendiente”
-          };
-        }
-        return r;
-      });
-      return copy;
-    });
-
-    // 3️⃣ Quitamos el check del mapa de exclusión
+    // 4) Actualizamos el estado local: ese paciente deja de estar marcado
     setExclState((prev) => {
       const m = new Map(prev);
       const key = `${nro}||${documento}`;
@@ -490,10 +457,10 @@ const pendientesKeysPrevios = new Set(
       return m;
     });
 
-    // 4️⃣ Reprocesamos el resumen para actualizar importes, totales, etc.
-    await handleProcess();
-
     alert("Pendiente anulado correctamente.");
+
+    // 5) Opcional: refrescar el resumen para que desaparezca de la liquidación
+    await handleProcess();
   } catch (err) {
     console.error("Error al anular pendiente:", err);
     alert("Error al anular pendiente.");
@@ -871,9 +838,7 @@ const fmtDate = (d) => {
                     <td>{g.unidadProduccion || "-"}</td>
                     <td>{g.tipoEvaluacion || "-"}</td>
                     <td style={{ textAlign: "right" }}>
-                    {fmtMoney(
-                      typeof g.importeVisible === "number" ? g.importeVisible : g.importe
-                    )}
+                      {fmtMoney(g.importe)}
                     </td>
                    <td>
                       {g.estadoLiquidado === "LIQUIDADO" && (

@@ -363,7 +363,6 @@ for (const p of pendientesExtra) {
 
     precioCb: importeNum,
     estadoPrestacion: "PENDIENTE",
-    estadoPrestacionUp: "PENDIENTE",
 
     sedeCodigo,
     sedeNombre,
@@ -376,59 +375,6 @@ for (const p of pendientesExtra) {
     //     pero se puede liquidar directamente
     origenPendiente: esArrastradoPendiente,
   });
-}
-// ===========================
-// 6.c) Sincronizar pendientes: si el SP dice que ya NO están pendientes,
-//      marcamos el registro como RESUELTO en LiquidacionClientesPendientes
-// ===========================
-try {
-  // Mapa rápido Nro||Doc -> estadoPrestacionUp (ATENDIDO, PENDIENTE, etc.)
-  const estadoPorKey = new Map();
-  for (const d of details) {
-    const key = `${d.nro || ""}||${d.documento || ""}`;
-    const est = (d.estadoPrestacionUp || "").toString().trim().toUpperCase();
-    if (!estadoPorKey.has(key)) {
-      estadoPorKey.set(key, est);
-    }
-  }
-
-  const poolFactSync = await getPool();
-
-  for (const p of pendientesExtra) {
-    const nro = (p.Nro || "").trim();
-    const doc = (p.Documento || "").trim();
-    const key = `${nro}||${doc}`;
-
-    const estSp = estadoPorKey.get(key); // lo que dice el SP hoy
-
-    // Si el SP dice que ya NO está pendiente → marcar como RESUELTO
-    if (
-      estSp &&
-      estSp !== "PENDIENTE" &&
-      estSp !== "GENERADO" // por si acaso
-    ) {
-      await poolFactSync
-        .request()
-        .input("Nro", sql.NVarChar, nro)
-        .input("Documento", sql.NVarChar, doc)
-        .query(`
-          UPDATE dbo.LiquidacionClientesPendientes
-          SET Estado = 'RESUELTO',
-              UpdatedAt = SYSDATETIME()
-          WHERE 
-            LTRIM(RTRIM(Nro)) = LTRIM(RTRIM(@Nro))
-            AND LTRIM(RTRIM(ISNULL(Documento, ''))) = LTRIM(RTRIM(ISNULL(@Documento, '')))
-            AND Estado IN ('PENDIENTE','REACTIVADO');
-        `);
-    }
-  }
-
-  // Además, solo seguimos arrastrando los que siguen realmente como PENDIENTE
-  // (para 6.b y resto de la lógica)
-  // ⚠️ Si quieres ser más fino, puedes mover esto antes de 6.b y usar este arreglo
-  // en lugar de "pendientesExtra" original.
-} catch (syncErr) {
-  console.error("Error sincronizando pendientes RESUELTO:", syncErr);
 }
   // ===========================
 // 7) AGRUPAR RESUMEN
