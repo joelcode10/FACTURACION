@@ -109,9 +109,7 @@ router.get("/process", async (req, res) => {
 
     const rows = result.recordset || [];
 
-    // ================================
-// 2) LEER PENDIENTES (NO LIQUIDAR)
-// ================================
+    // 2) LEER PENDIENTES (NO LIQUIDAR) DE ESTE PERIODO y también arrastrados
 const pendResult = await poolFact
   .request()
   .input("DesdeActual", sql.Date, from)
@@ -139,10 +137,23 @@ const pendResult = await poolFact
       )
   `);
 
-// solo excluimos de la liquidación los que SIGUEN marcados como PENDIENTE
+const pendRows = pendResult.recordset || [];
+
+// 🔒 SOLO se consideran "NO liquidar" los PENDIENTE del PERIODO ACTUAL
 const pendientesSet = new Set(
-  (pendResult.recordset || [])
-    .filter((p) => (p.Estado || "").toUpperCase() === "PENDIENTE")
+  pendRows
+    .filter((p) => {
+      const estado = (p.Estado || "").toUpperCase();
+      if (estado !== "PENDIENTE") return false;
+
+      // comparamos fechas del registro con el rango actual
+      if (!p.Desde || !p.Hasta) return false;
+
+      const desdeStr = new Date(p.Desde).toISOString().slice(0, 10);
+      const hastaStr = new Date(p.Hasta).toISOString().slice(0, 10);
+
+      return desdeStr === from && hastaStr === to;
+    })
     .map((p) => {
       const nro = (p.Nro || "").trim();
       const doc = (p.Documento || "").trim();
@@ -150,8 +161,8 @@ const pendientesSet = new Set(
     })
 );
 
-// lista completa de pendientes (PENDIENTE + REACTIVADO) para armar detalles
-const pendientesExtra = pendResult.recordset || [];
+// lista completa de pendientes (PENDIENTE + REACTIVADO) — por si luego quieres usarlos
+const pendientesExtra = pendRows;
     // ======================================
     // 3) EPISODIOS YA LIQUIDADOS (todas las liquidaciones VIGENTES)
     // ======================================
@@ -759,9 +770,9 @@ router.post("/export", async (req, res) => {
       `);
 
     const rows = result.recordset || [];
-    
-    // 🔹 Excluir los "NO liquidar" (pendientes) de este mismo periodo
-    const poolFact = await getPool();
+
+    // 🔹 Cargar pendientes SOLO del periodo actual (para "NO liquidar")
+    const poolFact = await getPool();            // 👈 IMPORTANTE: aquí defines poolFact
     const pendResult = await poolFact
       .request()
       .input("Desde", sql.Date, from)
@@ -774,14 +785,18 @@ router.post("/export", async (req, res) => {
           AND Hasta = @Hasta
       `);
 
+    const pendRows = pendResult.recordset || [];
+
+    // 🔒 SOLO se consideran "NO liquidar" los PENDIENTE del PERIODO ACTUAL
     const pendientesSet = new Set(
-      (pendResult.recordset || []).map((p) => {
+      pendRows.map((p) => {
         const nro = (p.Nro || "").trim();
         const doc = (p.Documento || "").trim();
         return `${nro}||${doc}`;
       })
     );
 
+    // 🔽 Aplicar "NO liquidar" + filtro de estado de prestación
     const filteredRows = rows.filter((r) => {
       const nro = (r.Nro || "").trim();
       const doc = (r["Documento"] || r["N° Documento"] || "").trim();
@@ -790,7 +805,7 @@ router.post("/export", async (req, res) => {
       // 1) Nunca exportar lo marcado como NO liquidar en este periodo
       if (pendientesSet.has(key)) return false;
 
-      // 2) Si el usuario filtró por estado de prestación, respetarlo también aquí
+      // 2) Respetar el filtro de estado de prestación si viene del front
       if (estadosFiltro.length > 0) {
         const estadoRow = (r["Estado de la Prestación"] || "")
           .toString()
@@ -804,65 +819,63 @@ router.post("/export", async (req, res) => {
 
       return true;
     });
-    // Construimos detalles a partir del SP de export (detallado)
-    // =========================================================
-// 1) Construir detalles a partir del SP (rango actual)
-// =========================================================
-const details = [];
-for (const r of filteredRows) {
-  const { sedeCodigo, sedeNombre } = r["Sede"]
-    ? { sedeCodigo: null, sedeNombre: r["Sede"] }
-    : mapSedeFromNro(r.Nro);
 
-  details.push({
-    nro: r.Nro,
-    fechaInicio: r["Fecha Inicio"],
-    protocolo: r["Protocolo"],
-    cliente: r["Cliente"] || r["RAZÓN SOCIAL"],
-    rucCliente: r["RUC DEL CLIENTE"],
-    razonSocial: r["RAZÓN SOCIAL"] || r["Cliente"],
-    unidadProduccion: r["Unidad de Producción"],
-    tipoEvaluacion: mapTipoEvaluacion(r["Tipo de Evaluación"] || r["Tipo de Examen"]),
-    condicionPago: r["Condición de Pago"] || r["Condicion de Pago"],
-    documento: r["Documento"] || r["N° Documento"],
-    paciente: r["Paciente"],
-    descripcionPrestacion: r["Descripción de la Prestación"],
-    importe: Number(r["Importe"] || r["Precio CB"] || 0),
-    sedeNombre,
-    estadoPrestacion: r["Estado de la Prestación"] || "",
-  });
-}
+    // 🧱 A partir de aquí sigues tal cual tenías:
+    // // 1) Construir detalles a partir del SP (rango actual)
+    const details = [];
+    for (const r of filteredRows) {
+      const { sedeCodigo, sedeNombre } = r["Sede"]
+        ? { sedeCodigo: null, sedeNombre: r["Sede"] }
+        : mapSedeFromNro(r.Nro);
 
-// =========================================================
-// 2) Pendientes arrastrados (periodos anteriores y mismos)
-//    — Igual que /process, para que entren al Excel
-// =========================================================
-const pendExtraResult = await poolFact
-  .request()
-  .input("DesdeActual", sql.Date, from)
-  .input("HastaActual", sql.Date, to)
-  .query(`
-    SELECT 
-      Nro,
-      Documento,
-      Paciente,
-      Cliente,
-      UnidadProduccion,
-      TipoEvaluacion,
-      Sede,
-      FechaInicio,
-      Importe,
-      CondicionPago,
-      Desde,
-      Hasta,
-      Estado
-    FROM dbo.LiquidacionClientesPendientes
-    WHERE Estado IN ('PENDIENTE','REACTIVADO')
-      AND (
-           (Desde = @DesdeActual AND Hasta = @HastaActual) -- mismos días
-        OR (Hasta < @HastaActual)                          -- meses anteriores
-      )
-  `);
+      details.push({
+        nro: r.Nro,
+        fechaInicio: r["Fecha Inicio"],
+        protocolo: r["Protocolo"],
+        cliente: r["Cliente"] || r["RAZÓN SOCIAL"],
+        rucCliente: r["RUC DEL CLIENTE"],
+        razonSocial: r["RAZÓN SOCIAL"] || r["Cliente"],
+        unidadProduccion: r["Unidad de Producción"],
+        tipoEvaluacion: mapTipoEvaluacion(
+          r["Tipo de Evaluación"] || r["Tipo de Examen"]
+        ),
+        condicionPago: r["Condición de Pago"] || r["Condicion de Pago"],
+        documento: r["Documento"] || r["N° Documento"],
+        paciente: r["Paciente"],
+        descripcionPrestacion: r["Descripción de la Prestación"],
+        importe: Number(r["Importe"] || r["Precio CB"] || 0),
+        sedeNombre,
+        estadoPrestacion: r["Estado de la Prestación"] || "",
+      });
+    }
+
+    // 👇 Y aquí ya sigue tu bloque de `pendExtraResult` que usa el MISMO poolFact
+    const pendExtraResult = await poolFact
+      .request()
+      .input("DesdeActual", sql.Date, from)
+      .input("HastaActual", sql.Date, to)
+      .query(`
+        SELECT 
+          Nro,
+          Documento,
+          Paciente,
+          Cliente,
+          UnidadProduccion,
+          TipoEvaluacion,
+          Sede,
+          FechaInicio,
+          Importe,
+          CondicionPago,
+          Desde,
+          Hasta,
+          Estado
+        FROM dbo.LiquidacionClientesPendientes
+        WHERE Estado IN ('PENDIENTE','REACTIVADO')
+          AND (
+               (Desde = @DesdeActual AND Hasta = @HastaActual) -- mismos días
+            OR (Hasta < @HastaActual)                          -- meses anteriores
+          )
+      `);
 
 const pendientesExtra = pendExtraResult.recordset || [];
 
@@ -1158,21 +1171,35 @@ router.post("/liquidar", async (req, res) => {
     }
 
     // 2) LEER PENDIENTES (NO LIQUIDAR) SOLO DEL PERIODO ACTUAL
-const poolFact = await getPool();
-const pendResult = await poolFact
+    const pendResult = await poolFact
   .request()
-  .input("Desde", sql.Date, from)
-  .input("Hasta", sql.Date, to)
+  .input("DesdeActual", sql.Date, from)
+  .input("HastaActual", sql.Date, to)
   .query(`
-    SELECT
+    SELECT 
       Nro,
-      Documento
+      Documento,
+      Paciente,
+      Cliente,
+      UnidadProduccion,
+      TipoEvaluacion,
+      Sede,
+      FechaInicio,
+      Importe,
+      CondicionPago,
+      Desde,
+      Hasta,
+      Estado
     FROM dbo.LiquidacionClientesPendientes
-    WHERE Estado = 'PENDIENTE'
-      AND Desde = @Desde
-      AND Hasta = @Hasta
+    WHERE Estado IN ('PENDIENTE', 'REACTIVADO')
+      AND (
+           (Desde = @DesdeActual AND Hasta = @HastaActual)
+        OR (Hasta < @HastaActual)
+      )
   `);
 
+const pendRows = pendResult.recordset || [];
+const pendientesExtra = pendRows;
 const pendientesSet = new Set(
   (pendResult.recordset || []).map((p) => {
     const nro = (p.Nro || "").trim();
@@ -1229,7 +1256,69 @@ const pendientesSet = new Set(
         sedeNombre,
       });
     }
+   // 4.b) Agregar también los PENDIENTES ARRASTRADOS (PENDIENTE / REACTIVADO)
+//      para que se liquiden cuando ya NO están marcados como "NO liquidar"
+//      en el PERIODO ACTUAL.
+for (const p of pendientesExtra) {
+  const nro = (p.Nro || "").trim();
+  const doc = (p.Documento || "").trim();
+  const key = `${nro}||${doc}`;
 
+  // ⚠️ Si este Nro+Documento está en pendientesSet del PERIODO ACTUAL,
+  //    significa que sigue marcado como NO liquidar en ESTE rango.
+  //    Entonces NO lo incluimos en la liquidación.
+  if (pendientesSet.has(key)) continue;
+
+  // Evitar duplicado si ya vino por el SP del rango actual
+  const yaExiste = details.some(
+    (d) => `${d.nro || ""}||${d.documento || ""}` === key
+  );
+  if (yaExiste) continue;
+
+  // Respetar condición de pago si se está filtrando
+  if (condicionPago && condicionPago !== "TODAS") {
+    const condPend = (p.CondicionPago || "")
+      .toString()
+      .trim()
+      .toUpperCase();
+    const condFiltro = condicionPago.toString().trim().toUpperCase();
+    if (condPend !== condFiltro) continue;
+  }
+
+  const fechaInicioPend = p.FechaInicio || p.Desde || p.Hasta || null;
+
+  const sedeNombre = p.Sede || "";
+  const sedeCodigo = null;
+
+  const cliente = p.Cliente || "";
+  const unidadProduccion = p.UnidadProduccion || "";
+  const tipoEvalNorm = mapTipoEvaluacion(p.TipoEvaluacion || "");
+  const importeNum = Number(p.Importe ?? 0);
+
+  details.push({
+    nro,
+    fechaInicio: fechaInicioPend,
+
+    protocolo: null,
+    cliente,
+    rucCliente: null,
+    razonSocial: cliente,
+    unidadProduccion,
+    tipoEvaluacion: tipoEvalNorm,
+
+    condicionPago: p.CondicionPago || "",
+
+    documento: doc,
+    paciente: p.Paciente || "",
+    descripcionPrestacion: "(Pendiente arrastrado)",
+    evaluador: "",
+
+    importe: importeNum,
+
+    sedeCodigo,
+    sedeNombre,
+  });
+}
     // 5) Agrupar por cliente + unidad + tipo + sede (igual que /process)
     const groupMap = new Map();
     for (const row of details) {

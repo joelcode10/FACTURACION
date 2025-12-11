@@ -128,40 +128,89 @@ useEffect(() => {
     }
   }
 
-  const viewGroups = useMemo(() => {
-  return groups.filter((g) => {
-    // cliente
-    if (fCliente !== "TODOS" && g.cliente !== fCliente) return false;
-    // tipo evaluación
-    if (fTipo !== "TODOS" && g.tipoEvaluacion !== fTipo) return false;
+ const viewGroups = useMemo(() => {
+  const result = [];
 
-    const rows = detailsByGroupId[g.id] || [];
+  for (const g of groups) {
+    // 1) Filtro por cliente
+    if (fCliente !== "TODOS" && g.cliente !== fCliente) continue;
+    // 2) Filtro por tipo de evaluación
+    if (fTipo !== "TODOS" && g.tipoEvaluacion !== fTipo) continue;
 
-    // sede
+    const allRows = detailsByGroupId[g.id] || [];
+
+    // 3) Filtro por sede (usa las filas)
     if (fSede !== "TODOS") {
-      const ok = rows.some((r) => r.sedeNombre === fSede);
-      if (!ok) return false;
+      const okSede = allRows.some((r) => r.sedeNombre === fSede);
+      if (!okSede) continue;
     }
 
-    // 🔹 NUEVO: filtro por Estado de la prestación (multi-check)
+    // 4) Filtro por Estado de la prestación
+    let usedRows = allRows;
     if (estadosSeleccionados.length > 0) {
-      const okEstado = rows.some((r) =>
+      usedRows = allRows.filter((r) =>
         estadosSeleccionados.includes(r.estadoPrestacion || "")
       );
-      if (!okEstado) return false;
+      // si con el filtro ya no queda ninguna fila, el grupo no se muestra
+      if (usedRows.length === 0) continue;
     }
 
-    return true;
-  });
+    // 5) Calcular importeVisible según las filas filtradas
+    let importeVisible = g.importe; // por defecto, sin filtro
+
+    if (estadosSeleccionados.length > 0) {
+      let importeTotal = 0;
+      let importeDisponible = 0;
+      let importeLiquidado = 0;
+
+      for (const r of usedRows) {
+        const monto = Number(r.precioCb || 0);
+        importeTotal += monto;
+
+        const esPendiente = !!r.isPendiente;
+        const esLiquidado = !!r.estaLiquidado;
+
+        // misma lógica que en el backend:
+        if (!esPendiente && !esLiquidado) {
+          importeDisponible += monto;
+        }
+        if (esLiquidado) {
+          importeLiquidado += monto;
+        }
+      }
+
+      // Respetamos la lógica de estadoLiquidado del backend
+      if (g.estadoLiquidado === "LIQUIDADO") {
+        importeVisible = importeTotal;
+      } else if (g.estadoLiquidado === "PARCIAL") {
+        importeVisible = importeLiquidado;
+      } else {
+        // "NO"
+        importeVisible = importeDisponible;
+      }
+    }
+
+    result.push({
+      ...g,
+      importeVisible,
+    });
+  }
+
+  return result;
 }, [groups, detailsByGroupId, fCliente, fTipo, fSede, estadosSeleccionados]);
 
   // totales (sobre los seleccionados visibles)
   const subtotal = useMemo(() => {
-    let s = 0;
-    for (const g of viewGroups)
-      if (selectedIds.has(g.id)) s += Number(g.importe || 0);
-    return s;
-  }, [viewGroups, selectedIds]);
+  let s = 0;
+  for (const g of viewGroups) {
+    if (selectedIds.has(g.id)) {
+      s += Number(
+        g.importeVisible ?? g.importe ?? 0
+      );
+    }
+  }
+  return s;
+}, [viewGroups, selectedIds]);
 
   function toggleSelect(id) {
     setSelectedIds((prev) => {
@@ -329,13 +378,16 @@ const pendientesKeysPrevios = new Set(
     // 5) Inicializamos el estado de exclusiones:
     //    - Si ya es pendiente → lo dejamos marcado en true
     const map = new Map();
-    combined.forEach((r) => {
-      const key = `${r.nro || ""}||${r.documento || ""}`;
-      if (r.isPendiente) {
-        map.set(key, true);
-      }
-    });
-    setExclState(map);
+combined.forEach((r) => {
+  const key = `${r.nro || ""}||${r.documento || ""}`;
+
+  // ✅ Marcar como "No liquidar" solo si es pendiente del periodo actual
+  //    y NO es un pendiente arrastrado de un periodo anterior.
+  if (r.isPendiente && !r.origenPendiente && !r.fromPendientePrevio) {
+    map.set(key, true);
+  }
+});
+setExclState(map);
   } catch (err) {
     console.error("Error al abrir detalle con pendientes:", err);
     // si quieres, muestra mensaje de error en pantalla
@@ -350,7 +402,17 @@ const pendientesKeysPrevios = new Set(
 
   const patientsInGroup = useMemo(() => {
   if (!detailGroupId) return [];
-  const rows = detailsByGroupId[detailGroupId] || [];
+
+  const baseRows = detailsByGroupId[detailGroupId] || [];
+
+  // 🔹 Aplicar el MISMO filtro de estados que en la grilla
+  const rows =
+    estadosSeleccionados.length > 0
+      ? baseRows.filter((r) =>
+          estadosSeleccionados.includes(r.estadoPrestacion || "")
+        )
+      : baseRows;
+
   const acc = new Map();
 
   for (const r of rows) {
@@ -362,30 +424,25 @@ const pendientesKeysPrevios = new Set(
         documento: r.documento,
         nro: r.nro,
         importe: 0,
-        // ⚠️ Pendiente EN el periodo actual
+        // Pendiente EN el periodo actual
         isPendiente: false,
-        // ⚠️ Viene arrastrado de otro periodo (tabla pendientes)
+        // Viene arrastrado de otro periodo
         origenPendiente: false,
-        // ⚠️ Fecha de inicio original (mínima de sus filas)
+        // Fecha de inicio mínima
         fechaInicio: r.fechaInicio || null,
       };
 
-    // acumular importe
-    prev.importe += Number(r.precioCb || 0);
+    // 💰 Sumar solo las filas que pasaron el filtro
+    prev.importe += Number(r.precioCb || r.importe || 0);
 
-    // si alguna prestación está marcada como pendiente actual
     if (r.isPendiente) {
       prev.isPendiente = true;
     }
 
-    // si alguna prestación viene de pendientes de periodos anteriores
     if (r.origenPendiente || r.fromPendientePrevio) {
-      // (soporte por si el backend usa fromPendientePrevio)
       prev.origenPendiente = true;
     }
 
-    
-    // mantener SIEMPRE la fecha mínima (la más antigua)
     if (
       r.fechaInicio &&
       (!prev.fechaInicio ||
@@ -398,7 +455,7 @@ const pendientesKeysPrevios = new Set(
   }
 
   return Array.from(acc.values());
-}, [detailGroupId, detailsByGroupId]);
+}, [detailGroupId, detailsByGroupId, estadosSeleccionados]);
 // Grupo actual y si es editable (solo cuando estadoLiquidado === "NO")
   const grupoActual = useMemo(
     () => groups.find((g) => g.id === detailGroupId) || null,
@@ -838,8 +895,8 @@ const fmtDate = (d) => {
                     <td>{g.unidadProduccion || "-"}</td>
                     <td>{g.tipoEvaluacion || "-"}</td>
                     <td style={{ textAlign: "right" }}>
-                      {fmtMoney(g.importe)}
-                    </td>
+                    {fmtMoney(g.importeVisible ?? g.importe)}
+                  </td>
                    <td>
                       {g.estadoLiquidado === "LIQUIDADO" && (
                         <span
@@ -1008,7 +1065,7 @@ const fmtDate = (d) => {
                     patientsInGroup.map((p, idx) => {
                       const k = `${p.nro || ""}||${p.documento || ""}`;
                       const checked = !!exclState.get(k);
-
+                      const esPendienteActual = p.isPendiente && !p.origenPendiente && !p.fromPendientePrevio;
                       const esPendiente = !!p.isPendiente;         // pendiente del periodo actual
                       const esArrastrado = !!p.origenPendiente;    // viene de periodo anterior
 
@@ -1031,10 +1088,11 @@ const fmtDate = (d) => {
                               - bloqueado solo si es pendiente del periodo actual
                               - para arrastrados viene habilitado para liquidar directamente */}
                           <td>
+
                             <input
                               type="checkbox"
                               checked={checked}
-                              disabled={esPendiente} // solo bloqueo si ES pendiente actual
+                              disabled={esPendienteActual}
                               onChange={(e) =>
                                 setExclude(p.nro, p.documento, e.target.checked)
                               }
