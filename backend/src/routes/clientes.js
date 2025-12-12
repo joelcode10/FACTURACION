@@ -130,10 +130,10 @@ const pendResult = await poolFact
       Hasta,
       Estado
     FROM dbo.LiquidacionClientesPendientes
-    WHERE Estado IN ('PENDIENTE', 'REACTIVADO')
+  WHERE Estado IN ('PENDIENTE', 'REACTIVADO')
       AND (
            (Desde = @DesdeActual AND Hasta = @HastaActual) -- mismo período
-        OR (Hasta < @HastaActual)                          -- períodos anteriores
+        OR (Hasta < @DesdeActual)                          -- períodos anteriores completamente
       )
   `);
 
@@ -351,7 +351,7 @@ for (const p of pendientesExtra) {
     esMismoPeriodo && estadoPend === "PENDIENTE";
 
   const esArrastradoPendiente =
-    !esMismoPeriodo && estadoPend === "PENDIENTE";
+    !esMismoPeriodo && (estadoPend === "PENDIENTE" || estadoPend === "REACTIVADO");
 
   // 👉 Fallback de fecha: primero FechaInicio, luego Desde, luego Hasta
   const fechaInicioPend = p.FechaInicio || p.Desde || p.Hasta || null;
@@ -1149,6 +1149,8 @@ router.post("/liquidar", async (req, res) => {
 
     // 1) Traer detalle completo desde cbmedic (mismo SP que /process)
     const poolCb = await getPoolCbmedic();
+    const poolFact = await getPool(); // 👈 AQUÍ se define poolFact
+
     const result = await poolCb
       .request()
       .input("FechaDesde", sql.Date, from)
@@ -1170,44 +1172,64 @@ router.post("/liquidar", async (req, res) => {
       });
     }
 
-    // 2) LEER PENDIENTES (NO LIQUIDAR) SOLO DEL PERIODO ACTUAL
+    // 2) LEER PENDIENTES (NO LIQUIDAR) DEL PERIODO ACTUAL + ARRASTRADOS
     const pendResult = await poolFact
-  .request()
-  .input("DesdeActual", sql.Date, from)
-  .input("HastaActual", sql.Date, to)
-  .query(`
-    SELECT 
-      Nro,
-      Documento,
-      Paciente,
-      Cliente,
-      UnidadProduccion,
-      TipoEvaluacion,
-      Sede,
-      FechaInicio,
-      Importe,
-      CondicionPago,
-      Desde,
-      Hasta,
-      Estado
-    FROM dbo.LiquidacionClientesPendientes
-    WHERE Estado IN ('PENDIENTE', 'REACTIVADO')
-      AND (
-           (Desde = @DesdeActual AND Hasta = @HastaActual)
-        OR (Hasta < @HastaActual)
-      )
-  `);
+      .request()
+      .input("DesdeActual", sql.Date, from)
+      .input("HastaActual", sql.Date, to)
+      .query(`
+        SELECT 
+          Nro,
+          Documento,
+          Paciente,
+          Cliente,
+          UnidadProduccion,
+          TipoEvaluacion,
+          Sede,
+          FechaInicio,
+          Importe,
+          CondicionPago,
+          Desde,
+          Hasta,
+          Estado
+        FROM dbo.LiquidacionClientesPendientes
+      WHERE Estado IN ('PENDIENTE', 'REACTIVADO')
+          AND (
+               (Desde = @DesdeActual AND Hasta = @HastaActual) -- mismo periodo
+            OR (Hasta < @DesdeActual)                          -- periodos anteriores completamente
+          )
+      `);
 
-const pendRows = pendResult.recordset || [];
-const pendientesExtra = pendRows;
-const pendientesSet = new Set(
-  (pendResult.recordset || []).map((p) => {
-    const nro = (p.Nro || "").trim();
-    const doc = (p.Documento || "").trim();
-    return `${nro}||${doc}`;
-  })
-);
-    // 3) Excluir NO liquidar
+    const pendRows = pendResult.recordset || [];
+    const pendientesExtra = pendRows;
+
+    // CORRECCIÓN AQUÍ:
+    // Solo agregamos al "Set de bloqueo" (pendientesSet) aquellos registros 
+    // que son PENDIENTES y pertenecen EXACTAMENTE al periodo que estamos liquidando.
+    // Si pertenecen a periodos pasados, NO los metemos aquí para que el código de abajo 
+    // (4.b) los deje pasar y se liquiden.
+    const pendientesSet = new Set(
+      pendRows
+        .filter((p) => {
+          // Validamos que el estado sea PENDIENTE
+          const estado = (p.Estado || "").toUpperCase();
+          if (estado !== "PENDIENTE") return false;
+
+          // Validamos fechas para asegurar que es una exclusión de ESTE periodo
+          if (!p.Desde || !p.Hasta) return false;
+          const desdeStr = new Date(p.Desde).toISOString().slice(0, 10);
+          const hastaStr = new Date(p.Hasta).toISOString().slice(0, 10);
+
+          return desdeStr === from && hastaStr === to;
+        })
+        .map((p) => {
+          const nro = (p.Nro || "").trim();
+          const doc = (p.Documento || "").trim();
+          return `${nro}||${doc}`;
+        })
+    );
+
+    // 3) Excluir NO liquidar (Solo se excluirán los que estén en el Set filtrado arriba)
     const filtered = rawRows.filter((r) => {
       const nro = (r.Nro || "").trim();
       const doc = (r["Documento"] || r["N° Documento"] || "").trim();
@@ -1215,15 +1237,9 @@ const pendientesSet = new Set(
       return !pendientesSet.has(key);
     });
 
-    if (!filtered.length) {
-      return res.status(400).json({
-        ok: false,
-        message: "No hay registros (descontando NO liquidar) para liquidar.",
-      });
-    }
-
-    // 4) Normalizar filas
+    // 4) Normalizar filas del SP
     const details = [];
+
     for (const r of filtered) {
       const { sedeCodigo, sedeNombre } = r["Sede"]
         ? { sedeCodigo: null, sedeNombre: r["Sede"] }
@@ -1231,96 +1247,117 @@ const pendientesSet = new Set(
 
       details.push({
         nro: (r.Nro || "").trim(),
-        fechaInicio: r["Fecha Inicio"],
-
-        protocolo: r["Protocolo"],
+        documento: (r["Documento"] || r["N° Documento"] || "").trim(),
+        paciente: r["Paciente"],
         cliente: r["Cliente"] || r["RAZÓN SOCIAL"],
-        rucCliente: r["RUC DEL CLIENTE"],
-        razonSocial: r["RAZÓN SOCIAL"] || r["Cliente"],
         unidadProduccion: r["Unidad de Producción"],
         tipoEvaluacion: mapTipoEvaluacion(
           r["Tipo de Evaluación"] || r["Tipo de Examen"]
         ),
-
+        sedeNombre,
+        fechaInicio: r["Fecha Inicio"],
+        importe: Number(r["Importe"] || r["Precio CB"] || 0),
         condicionPago:
           r["Condición de Pago"] || r["Condicion de Pago"] || "",
-
-        documento: (r["Documento"] || r["N° Documento"] || "").trim(),
-        paciente: r["Paciente"],
+        rucCliente: r["RUC DEL CLIENTE"] || null,
+        razonSocial: r["RAZÓN SOCIAL"] || r["Cliente"] || "",
         descripcionPrestacion: r["Descripción de la Prestación"],
-        evaluador: r["Evaluador"],
-
-        importe: Number(r["Importe"] || r["Precio CB"] || 0),
-
-        sedeCodigo,
-        sedeNombre,
+        evaluador: r["Evaluador"] || "",
       });
     }
-   // 4.b) Agregar también los PENDIENTES ARRASTRADOS (PENDIENTE / REACTIVADO)
-//      para que se liquiden cuando ya NO están marcados como "NO liquidar"
-//      en el PERIODO ACTUAL.
-for (const p of pendientesExtra) {
-  const nro = (p.Nro || "").trim();
-  const doc = (p.Documento || "").trim();
-  const key = `${nro}||${doc}`;
 
-  // ⚠️ Si este Nro+Documento está en pendientesSet del PERIODO ACTUAL,
-  //    significa que sigue marcado como NO liquidar en ESTE rango.
-  //    Entonces NO lo incluimos en la liquidación.
-  if (pendientesSet.has(key)) continue;
+    // 4.b) AGREGAR PENDIENTES ARRASTRADOS A LA LIQUIDACIÓN
+    console.log("=== DEBUG: Pendientes para liquidar ===");
+    console.log("Total pendientes extra:", pendientesExtra.length);
+    console.log("From:", from, "To:", to);
+    
+    for (const p of pendientesExtra) {
+      const nro = (p.Nro || "").trim();
+      const doc = (p.Documento || "").trim();
+      if (!nro) continue;
 
-  // Evitar duplicado si ya vino por el SP del rango actual
-  const yaExiste = details.some(
-    (d) => `${d.nro || ""}||${d.documento || ""}` === key
-  );
-  if (yaExiste) continue;
+      const desdeStr = new Date(p.Desde).toISOString().slice(0, 10);
+      const hastaStr = new Date(p.Hasta).toISOString().slice(0, 10);
+      const esMismoPeriodo = desdeStr === from && hastaStr === to;
+      const estadoPend = (p.Estado || "").toUpperCase();
 
-  // Respetar condición de pago si se está filtrando
-  if (condicionPago && condicionPago !== "TODAS") {
-    const condPend = (p.CondicionPago || "")
-      .toString()
-      .trim()
-      .toUpperCase();
-    const condFiltro = condicionPago.toString().trim().toUpperCase();
-    if (condPend !== condFiltro) continue;
-  }
+      // Si es PENDIENTE del PERIODO ACTUAL → sigue siendo NO liquidar
+      // PERO si es REACTIVADO del periodo actual, SÍ se puede liquidar
+      if (esMismoPeriodo && estadoPend === "PENDIENTE") {
+        continue;
+      }
+      
+      // Si es de períodos anteriores, siempre se puede liquidar (PENDIENTE o REACTIVADO)
+      const esArrastrado = !esMismoPeriodo;
 
-  const fechaInicioPend = p.FechaInicio || p.Desde || p.Hasta || null;
+      // Evitar duplicados (si ya vino del SP)
+      const key = `${nro}||${doc}`;
+      const yaExiste = details.some(
+        (d) => `${(d.nro || "").trim()}||${(d.documento || "").trim()}` === key
+      );
+      if (yaExiste) continue;
+      
+      console.log(`Procesando pendiente: ${nro} - ${p.Paciente} - ${p.Cliente}`);
+      console.log(`  - Estado: ${estadoPend}`);
+      console.log(`  - esMismoPeriodo: ${esMismoPeriodo}`);
+      console.log(`  - esArrastrado: ${esArrastrado}`);
+      console.log(`  - Desde: ${desdeStr} Hasta: ${hastaStr}`);
 
-  const sedeNombre = p.Sede || "";
-  const sedeCodigo = null;
+      // Respetar condición de pago
+      if (condicionPago && condicionPago !== "TODAS") {
+        const condPend = (p.CondicionPago || "")
+          .toString()
+          .trim()
+          .toUpperCase();
+        const condFiltro = condicionPago.toString().trim().toUpperCase();
+        if (condPend !== condFiltro) continue;
+      }
 
-  const cliente = p.Cliente || "";
-  const unidadProduccion = p.UnidadProduccion || "";
-  const tipoEvalNorm = mapTipoEvaluacion(p.TipoEvaluacion || "");
-  const importeNum = Number(p.Importe ?? 0);
+      const importeNum = Number(p.Importe ?? 0);
+      
+      // Normalizar el tipo de evaluación para que coincida con el mapeo
+      const tipoEvalNormalizado = mapTipoEvaluacion(p.TipoEvaluacion || "");
 
-  details.push({
-    nro,
-    fechaInicio: fechaInicioPend,
+      details.push({
+        nro,
+        documento: doc,
+        paciente: p.Paciente || "",
+        cliente: p.Cliente || "",
+        unidadProduccion: p.UnidadProduccion || "",
+        tipoEvaluacion: tipoEvalNormalizado,
+        sedeNombre: p.Sede || "",
+        fechaInicio: p.FechaInicio || p.Desde || null,
+        importe: importeNum,
+        condicionPago: p.CondicionPago || "",
+        rucCliente: null,
+        razonSocial: p.Cliente || "",
+        descripcionPrestacion: "(Pendiente arrastrado)",
+        evaluador: "",
+        origenPendiente: esArrastrado,
+        // Campos adicionales para consistencia con las filas del SP
+        precioCb: importeNum,
+        isPendiente: false, // Los arrastrados se pueden liquidar
+        estaLiquidado: false,
+      });
+      
+      console.log(`  ✓ Agregado a details: ${p.Cliente} - ${p.TipoEvaluacion} - ${p.Sede}`);
+    }
+    
+    console.log("Total details después de agregar pendientes:", details.length);
+    console.log("=== FIN DEBUG ===");
 
-    protocolo: null,
-    cliente,
-    rucCliente: null,
-    razonSocial: cliente,
-    unidadProduccion,
-    tipoEvaluacion: tipoEvalNorm,
+    if (!details.length) {
+      return res.status(400).json({
+        ok: false,
+        message: "No hay filas para liquidar (SP + pendientes arrastrados).",
+      });
+    }
 
-    condicionPago: p.CondicionPago || "",
-
-    documento: doc,
-    paciente: p.Paciente || "",
-    descripcionPrestacion: "(Pendiente arrastrado)",
-    evaluador: "",
-
-    importe: importeNum,
-
-    sedeCodigo,
-    sedeNombre,
-  });
-}
-    // 5) Agrupar por cliente + unidad + tipo + sede (igual que /process)
+    // 5) Agrupar por cliente + unidad + tipo + sede (igual que en /process)
     const groupMap = new Map();
+    console.log("=== DEBUG: Agrupando para liquidar ===");
+    console.log("Total details:", details.length);
+    
     for (const row of details) {
       const key =
         (row.cliente || "") +
@@ -1342,21 +1379,51 @@ for (const p of pendientesExtra) {
           rows: [],
         };
         groupMap.set(key, grp);
+        console.log(`Nuevo grupo creado: ${key}`);
       }
       grp.rows.push(row);
+      
+      if (row.origenPendiente) {
+        console.log(`  - Fila con origenPendiente: ${row.paciente} (${row.nro})`);
+      }
     }
+    
+    console.log("Grupos creados:", groupMap.size);
+    console.log("=== FIN DEBUG AGRUPAR ===");
 
-    // 6) Tomar sólo los grupos seleccionados
+    // 6) Tomar solo los grupos seleccionados
     const rowsToLiquidate = [];
     const groupKeysSelected = new Set();
 
+    console.log("=== DEBUG: Selección de grupos ===");
+    console.log("IDs seleccionados desde frontend:", selectedIds);
+    console.log("Claves disponibles en groupMap:", Array.from(groupMap.keys()));
+    
+    // Normalizar IDs para comparación
+    const normalizedSelectedIds = selectedIds.map(id => {
+      const parts = id.split('||');
+      return `${parts[0] || ""}||${parts[1] || ""}||${parts[2] || ""}||${parts[3] || ""}`;
+    });
+    console.log("IDs normalizados:", normalizedSelectedIds);
+    console.log("Claves normalizadas en groupMap:", Array.from(groupMap.keys()));
+
     for (const [key, grp] of groupMap.entries()) {
-      // si no hay selectedIds, liquidar todos; si hay, solo esos
+      console.log(`Verificando grupo: ${key}`);
+      console.log(`  - Está en selectedIds: ${idsSet.has(key)}`);
+      console.log(`  - Está en normalizedSelectedIds: ${normalizedSelectedIds.includes(key)}`);
+      console.log(`  - Filas totales: ${grp.rows.length}`);
+      console.log(`  - Filas con origenPendiente: ${grp.rows.filter(r => r.origenPendiente).length}`);
+      
       if (!idsSet.size || idsSet.has(key)) {
+        console.log(`  ✓ Grupo SELECCIONADO`);
         groupKeysSelected.add(key);
         rowsToLiquidate.push(...grp.rows);
       }
     }
+
+    console.log("Total filas a liquidar:", rowsToLiquidate.length);
+    console.log("Filas con origenPendiente en liquidación:", rowsToLiquidate.filter(r => r.origenPendiente).length);
+    console.log("=== FIN DEBUG SELECCIÓN ===");
 
     if (!rowsToLiquidate.length) {
       return res.status(400).json({
@@ -1392,7 +1459,7 @@ for (const p of pendientesExtra) {
     const nextNum = lastNum + 1;
     const codigo = `LQ-${String(nextNum).padStart(5, "0")}`;
 
-    // 9) Insertar CAB + DET dentro de una transacción (sin Promise.all)
+    // 9) Insertar CAB + DET dentro de una transacción
     const tx = new sql.Transaction(poolFact);
     await tx.begin();
 
@@ -1446,16 +1513,13 @@ for (const p of pendientesExtra) {
           )
         `);
 
-      // DETALLE – inserts SECUENCIALES dentro de la misma transacción
+      // DETALLE
       for (const r of rowsToLiquidate) {
-        const nroSafe = r.nro || "";
-        const importeSafe = Number(r.importe ?? 0);
-
         const rq = new sql.Request(tx);
 
         await rq
           .input("IdLiquidacion", sql.UniqueIdentifier, IdLiquidacion)
-          .input("Nro", sql.NVarChar, nroSafe)
+          .input("Nro", sql.NVarChar, r.nro || "")
           .input("Documento", sql.NVarChar, r.documento || "")
           .input("Paciente", sql.NVarChar, r.paciente || "")
           .input("Cliente", sql.NVarChar, r.cliente || "")
@@ -1481,7 +1545,7 @@ for (const p of pendientesExtra) {
             sql.NVarChar,
             r.descripcionPrestacion || ""
           )
-          .input("Importe", sql.Decimal(18, 2), importeSafe)
+          .input("Importe", sql.Decimal(18, 2), r.importe || 0)
           .input(
             "CondicionPago",
             sql.NVarChar,
@@ -1512,6 +1576,27 @@ for (const p of pendientesExtra) {
 
       await tx.commit();
 
+      // 10) Actualizar estado de pendientes liquidados
+      // Marcar como LIQUIDADO los pendientes que se incluyeron en esta liquidación
+      const pendientesLiquidados = rowsToLiquidate.filter(r => r.origenPendiente);
+      
+      if (pendientesLiquidados.length > 0) {
+        for (const r of pendientesLiquidados) {
+          await poolFact
+            .request()
+            .input("Nro", sql.NVarChar, r.nro)
+            .input("Documento", sql.NVarChar, r.documento)
+            .query(`
+              UPDATE dbo.LiquidacionClientesPendientes
+              SET Estado = 'LIQUIDADO',
+                  UpdatedAt = SYSDATETIME()
+              WHERE Nro = @Nro
+                AND ISNULL(Documento,'') = ISNULL(@Documento,'')
+                AND Estado IN ('PENDIENTE', 'REACTIVADO');
+            `);
+        }
+      }
+
       return res.json({
         ok: true,
         message: "Liquidación registrada correctamente.",
@@ -1524,7 +1609,6 @@ for (const p of pendientesExtra) {
         pacientes,
       });
     } catch (errTx) {
-      // si algo falla dentro de la tx
       try {
         if (!tx._aborted) {
           await tx.rollback();
