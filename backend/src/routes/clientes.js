@@ -1127,12 +1127,8 @@ if (!finalDetails.length) {
     return res.status(500).send("Error al generar Excel.");
   }
 });
-/**
- * POST /api/clientes/liquidar
- * Guarda una liquidación real en LiquidacionClientesCab + Det
- */
 // ===============================
-//  POST /api/clientes/liquidar
+//  POST /api/clientes/liquidar (CORREGIDO)
 // ===============================
 router.post("/liquidar", async (req, res) => {
   try {
@@ -1147,10 +1143,8 @@ router.post("/liquidar", async (req, res) => {
 
     const idsSet = new Set(selectedIds || []);
 
-    // 1) Traer detalle completo desde cbmedic (mismo SP que /process)
+    // 1) Traer detalle completo desde cbmedic (SP principal)
     const poolCb = await getPoolCbmedic();
-    const poolFact = await getPool(); // 👈 AQUÍ se define poolFact
-
     const result = await poolCb
       .request()
       .input("FechaDesde", sql.Date, from)
@@ -1165,71 +1159,52 @@ router.post("/liquidar", async (req, res) => {
 
     const rawRows = result.recordset || [];
 
-    if (!rawRows.length) {
-      return res.status(400).json({
-        ok: false,
-        message: "No hay datos para liquidar en el rango indicado.",
-      });
-    }
-
-    // 2) LEER PENDIENTES (NO LIQUIDAR) DEL PERIODO ACTUAL + ARRASTRADOS
+    // 2) LEER PENDIENTES (Tanto del periodo actual como antiguos arrastrados)
+    const poolFact = await getPool(); 
     const pendResult = await poolFact
       .request()
       .input("DesdeActual", sql.Date, from)
       .input("HastaActual", sql.Date, to)
       .query(`
         SELECT 
-          Nro,
-          Documento,
-          Paciente,
-          Cliente,
-          UnidadProduccion,
-          TipoEvaluacion,
-          Sede,
-          FechaInicio,
-          Importe,
-          CondicionPago,
-          Desde,
-          Hasta,
-          Estado
+          Nro, Documento, Paciente, Cliente, UnidadProduccion, TipoEvaluacion, 
+          Sede, FechaInicio, Importe, CondicionPago, Desde, Hasta, Estado
         FROM dbo.LiquidacionClientesPendientes
-      WHERE Estado IN ('PENDIENTE', 'REACTIVADO')
+        WHERE Estado IN ('PENDIENTE', 'REACTIVADO')
           AND (
-               (Desde = @DesdeActual AND Hasta = @HastaActual) -- mismo periodo
-            OR (Hasta < @DesdeActual)                          -- periodos anteriores completamente
+               (Desde = @DesdeActual AND Hasta = @HastaActual) -- Exclusiones de ESTE mes
+            OR (Hasta < @HastaActual)                          -- Arrastrados meses anteriores
           )
       `);
 
     const pendRows = pendResult.recordset || [];
-    const pendientesExtra = pendRows;
 
-    // CORRECCIÓN AQUÍ:
-    // Solo agregamos al "Set de bloqueo" (pendientesSet) aquellos registros 
-    // que son PENDIENTES y pertenecen EXACTAMENTE al periodo que estamos liquidando.
-    // Si pertenecen a periodos pasados, NO los metemos aquí para que el código de abajo 
-    // (4.b) los deje pasar y se liquiden.
-    const pendientesSet = new Set(
-      pendRows
-        .filter((p) => {
-          // Validamos que el estado sea PENDIENTE
-          const estado = (p.Estado || "").toUpperCase();
-          if (estado !== "PENDIENTE") return false;
+    // 🔴 CORRECCIÓN CLAVE 1: Set de Bloqueo
+    // Solo bloqueamos los que son PENDIENTES y coinciden EXACTAMENTE con las fechas from/to actuales.
+    // Usamos strings YYYY-MM-DD para evitar problemas de horas/timezones.
+    const pendientesSet = new Set();
+    
+    pendRows.forEach((p) => {
+      const estado = (p.Estado || "").toUpperCase();
+      
+      // Si ya fue reactivado, no se bloquea nunca
+      if (estado !== "PENDIENTE") return;
 
-          // Validamos fechas para asegurar que es una exclusión de ESTE periodo
-          if (!p.Desde || !p.Hasta) return false;
-          const desdeStr = new Date(p.Desde).toISOString().slice(0, 10);
-          const hastaStr = new Date(p.Hasta).toISOString().slice(0, 10);
+      // Validar fechas estrictas para saber si pertenece a ESTE periodo de bloqueo
+      if (!p.Desde || !p.Hasta) return;
+      
+      const pDesde = new Date(p.Desde).toISOString().slice(0, 10);
+      const pHasta = new Date(p.Hasta).toISOString().slice(0, 10);
 
-          return desdeStr === from && hastaStr === to;
-        })
-        .map((p) => {
-          const nro = (p.Nro || "").trim();
-          const doc = (p.Documento || "").trim();
-          return `${nro}||${doc}`;
-        })
-    );
+      // Si las fechas coinciden con el filtro actual, es un "No Liquidar" de AHORA.
+      if (pDesde === from && pHasta === to) {
+        const nro = (p.Nro || "").trim();
+        const doc = (p.Documento || "").trim();
+        pendientesSet.add(`${nro}||${doc}`);
+      }
+    });
 
-    // 3) Excluir NO liquidar (Solo se excluirán los que estén en el Set filtrado arriba)
+    // 3) Filtrar las filas que vienen del SP (excluyendo los bloqueados)
     const filtered = rawRows.filter((r) => {
       const nro = (r.Nro || "").trim();
       const doc = (r["Documento"] || r["N° Documento"] || "").trim();
@@ -1237,9 +1212,15 @@ router.post("/liquidar", async (req, res) => {
       return !pendientesSet.has(key);
     });
 
+    if (!filtered.length && !pendRows.length) {
+      return res.status(400).json({
+        ok: false,
+        message: "No hay datos para liquidar en el rango indicado.",
+      });
+    }
+
     // 4) Normalizar filas del SP
     const details = [];
-
     for (const r of filtered) {
       const { sedeCodigo, sedeNombre } = r["Sede"]
         ? { sedeCodigo: null, sedeNombre: r["Sede"] }
@@ -1247,117 +1228,77 @@ router.post("/liquidar", async (req, res) => {
 
       details.push({
         nro: (r.Nro || "").trim(),
+        fechaInicio: r["Fecha Inicio"],
+        protocolo: r["Protocolo"],
+        cliente: r["Cliente"] || r["RAZÓN SOCIAL"],
+        rucCliente: r["RUC DEL CLIENTE"],
+        razonSocial: r["RAZÓN SOCIAL"] || r["Cliente"],
+        unidadProduccion: r["Unidad de Producción"],
+        tipoEvaluacion: mapTipoEvaluacion(r["Tipo de Evaluación"] || r["Tipo de Examen"]),
+        condicionPago: r["Condición de Pago"] || r["Condicion de Pago"] || "",
         documento: (r["Documento"] || r["N° Documento"] || "").trim(),
         paciente: r["Paciente"],
-        cliente: r["Cliente"] || r["RAZÓN SOCIAL"],
-        unidadProduccion: r["Unidad de Producción"],
-        tipoEvaluacion: mapTipoEvaluacion(
-          r["Tipo de Evaluación"] || r["Tipo de Examen"]
-        ),
-        sedeNombre,
-        fechaInicio: r["Fecha Inicio"],
-        importe: Number(r["Importe"] || r["Precio CB"] || 0),
-        condicionPago:
-          r["Condición de Pago"] || r["Condicion de Pago"] || "",
-        rucCliente: r["RUC DEL CLIENTE"] || null,
-        razonSocial: r["RAZÓN SOCIAL"] || r["Cliente"] || "",
         descripcionPrestacion: r["Descripción de la Prestación"],
-        evaluador: r["Evaluador"] || "",
+        evaluador: r["Evaluador"],
+        importe: Number(r["Importe"] || r["Precio CB"] || 0),
+        sedeCodigo,
+        sedeNombre,
       });
     }
 
-    // 4.b) AGREGAR PENDIENTES ARRASTRADOS A LA LIQUIDACIÓN
-    console.log("=== DEBUG: Pendientes para liquidar ===");
-    console.log("Total pendientes extra:", pendientesExtra.length);
-    console.log("From:", from, "To:", to);
-    
-    for (const p of pendientesExtra) {
+    // 4.b) Agregar PENDIENTES ARRASTRADOS (Corregido)
+    for (const p of pendRows) {
       const nro = (p.Nro || "").trim();
       const doc = (p.Documento || "").trim();
-      if (!nro) continue;
-
-      const desdeStr = new Date(p.Desde).toISOString().slice(0, 10);
-      const hastaStr = new Date(p.Hasta).toISOString().slice(0, 10);
-      const esMismoPeriodo = desdeStr === from && hastaStr === to;
-      const estadoPend = (p.Estado || "").toUpperCase();
-
-      // Si es PENDIENTE del PERIODO ACTUAL → sigue siendo NO liquidar
-      // PERO si es REACTIVADO del periodo actual, SÍ se puede liquidar
-      if (esMismoPeriodo && estadoPend === "PENDIENTE") {
-        continue;
-      }
-      
-      // Si es de períodos anteriores, siempre se puede liquidar (PENDIENTE o REACTIVADO)
-      const esArrastrado = !esMismoPeriodo;
-
-      // Evitar duplicados (si ya vino del SP)
       const key = `${nro}||${doc}`;
+
+      // Si está en el set de bloqueo (es exclusión de ESTE mes), saltar
+      if (pendientesSet.has(key)) continue;
+
+      // Evitar duplicado si ya vino por el SP normal
       const yaExiste = details.some(
-        (d) => `${(d.nro || "").trim()}||${(d.documento || "").trim()}` === key
+        (d) => `${d.nro || ""}||${d.documento || ""}` === key
       );
       if (yaExiste) continue;
-      
-      console.log(`Procesando pendiente: ${nro} - ${p.Paciente} - ${p.Cliente}`);
-      console.log(`  - Estado: ${estadoPend}`);
-      console.log(`  - esMismoPeriodo: ${esMismoPeriodo}`);
-      console.log(`  - esArrastrado: ${esArrastrado}`);
-      console.log(`  - Desde: ${desdeStr} Hasta: ${hastaStr}`);
 
-      // Respetar condición de pago
+      // 🔴 CORRECCIÓN CLAVE 2: Condición de Pago flexible
+      // Si el pendiente tiene CondicionPago NULL o vacía, lo dejamos pasar por seguridad
+      // para que no se pierda. Solo filtramos si AMBOS tienen valor y son diferentes.
       if (condicionPago && condicionPago !== "TODAS") {
-        const condPend = (p.CondicionPago || "")
-          .toString()
-          .trim()
-          .toUpperCase();
+        const condPend = (p.CondicionPago || "").toString().trim().toUpperCase();
         const condFiltro = condicionPago.toString().trim().toUpperCase();
-        if (condPend !== condFiltro) continue;
+        
+        // Solo saltamos si el pendiente TIENE dato y es diferente al filtro
+        if (condPend !== "" && condPend !== condFiltro) continue;
       }
 
-      const importeNum = Number(p.Importe ?? 0);
-      
-      // Normalizar el tipo de evaluación para que coincida con el mapeo
-      const tipoEvalNormalizado = mapTipoEvaluacion(p.TipoEvaluacion || "");
+      const tipoEvalNorm = mapTipoEvaluacion(p.TipoEvaluacion || "");
+      const cliente = p.Cliente || "";
+      const fechaInicioPend = p.FechaInicio || p.Desde || p.Hasta || null;
+      const sedeNombre = p.Sede || "";
 
       details.push({
         nro,
+        fechaInicio: fechaInicioPend,
+        protocolo: null,
+        cliente: cliente,
+        rucCliente: null,
+        razonSocial: cliente,
+        unidadProduccion: p.UnidadProduccion || "",
+        tipoEvaluacion: tipoEvalNorm,
+        condicionPago: p.CondicionPago || "", // Se guarda tal cual venga
         documento: doc,
         paciente: p.Paciente || "",
-        cliente: p.Cliente || "",
-        unidadProduccion: p.UnidadProduccion || "",
-        tipoEvaluacion: tipoEvalNormalizado,
-        sedeNombre: p.Sede || "",
-        fechaInicio: p.FechaInicio || p.Desde || null,
-        importe: importeNum,
-        condicionPago: p.CondicionPago || "",
-        rucCliente: null,
-        razonSocial: p.Cliente || "",
         descripcionPrestacion: "(Pendiente arrastrado)",
         evaluador: "",
-        origenPendiente: esArrastrado,
-        // Campos adicionales para consistencia con las filas del SP
-        precioCb: importeNum,
-        isPendiente: false, // Los arrastrados se pueden liquidar
-        estaLiquidado: false,
-      });
-      
-      console.log(`  ✓ Agregado a details: ${p.Cliente} - ${p.TipoEvaluacion} - ${p.Sede}`);
-    }
-    
-    console.log("Total details después de agregar pendientes:", details.length);
-    console.log("=== FIN DEBUG ===");
-
-    if (!details.length) {
-      return res.status(400).json({
-        ok: false,
-        message: "No hay filas para liquidar (SP + pendientes arrastrados).",
+        importe: Number(p.Importe ?? 0),
+        sedeCodigo: null,
+        sedeNombre,
       });
     }
 
-    // 5) Agrupar por cliente + unidad + tipo + sede (igual que en /process)
+    // 5) Agrupar
     const groupMap = new Map();
-    console.log("=== DEBUG: Agrupando para liquidar ===");
-    console.log("Total details:", details.length);
-    
     for (const row of details) {
       const key =
         (row.cliente || "") +
@@ -1370,60 +1311,23 @@ router.post("/liquidar", async (req, res) => {
 
       let grp = groupMap.get(key);
       if (!grp) {
-        grp = {
-          id: key,
-          cliente: row.cliente,
-          unidadProduccion: row.unidadProduccion,
-          tipoEvaluacion: row.tipoEvaluacion,
-          sedeNombre: row.sedeNombre,
-          rows: [],
-        };
+        grp = { id: key, rows: [] }; // simplificado para liquidar
         groupMap.set(key, grp);
-        console.log(`Nuevo grupo creado: ${key}`);
       }
       grp.rows.push(row);
-      
-      if (row.origenPendiente) {
-        console.log(`  - Fila con origenPendiente: ${row.paciente} (${row.nro})`);
-      }
     }
-    
-    console.log("Grupos creados:", groupMap.size);
-    console.log("=== FIN DEBUG AGRUPAR ===");
 
-    // 6) Tomar solo los grupos seleccionados
+    // 6) Filtrar por SelectedIds
     const rowsToLiquidate = [];
     const groupKeysSelected = new Set();
 
-    console.log("=== DEBUG: Selección de grupos ===");
-    console.log("IDs seleccionados desde frontend:", selectedIds);
-    console.log("Claves disponibles en groupMap:", Array.from(groupMap.keys()));
-    
-    // Normalizar IDs para comparación
-    const normalizedSelectedIds = selectedIds.map(id => {
-      const parts = id.split('||');
-      return `${parts[0] || ""}||${parts[1] || ""}||${parts[2] || ""}||${parts[3] || ""}`;
-    });
-    console.log("IDs normalizados:", normalizedSelectedIds);
-    console.log("Claves normalizadas en groupMap:", Array.from(groupMap.keys()));
-
     for (const [key, grp] of groupMap.entries()) {
-      console.log(`Verificando grupo: ${key}`);
-      console.log(`  - Está en selectedIds: ${idsSet.has(key)}`);
-      console.log(`  - Está en normalizedSelectedIds: ${normalizedSelectedIds.includes(key)}`);
-      console.log(`  - Filas totales: ${grp.rows.length}`);
-      console.log(`  - Filas con origenPendiente: ${grp.rows.filter(r => r.origenPendiente).length}`);
-      
+      // Si no hay selección específica o la key está seleccionada
       if (!idsSet.size || idsSet.has(key)) {
-        console.log(`  ✓ Grupo SELECCIONADO`);
         groupKeysSelected.add(key);
         rowsToLiquidate.push(...grp.rows);
       }
     }
-
-    console.log("Total filas a liquidar:", rowsToLiquidate.length);
-    console.log("Filas con origenPendiente en liquidación:", rowsToLiquidate.filter(r => r.origenPendiente).length);
-    console.log("=== FIN DEBUG SELECCIÓN ===");
 
     if (!rowsToLiquidate.length) {
       return res.status(400).json({
@@ -1432,21 +1336,18 @@ router.post("/liquidar", async (req, res) => {
       });
     }
 
-    // 7) Calcular montos y métricas
+    // 7) Calcular totales
     let subtotal = 0;
-    const pacientesSet = new Set();
-
+    const pacientesUnique = new Set();
     for (const r of rowsToLiquidate) {
       subtotal += Number(r.importe || 0);
-      const pacKey = `${(r.nro || "").trim()}||${(r.documento || "").trim()}`;
-      pacientesSet.add(pacKey);
+      pacientesUnique.add(`${(r.nro || "").trim()}||${(r.documento || "").trim()}`);
     }
 
     const igv = subtotal * 0.18;
     const total = subtotal + igv;
-
     const grupos = groupKeysSelected.size;
-    const pacientes = pacientesSet.size;
+    const pacientes = pacientesUnique.size;
 
     // 8) Generar código LQ-xxxxx
     const codeResult = await poolFact.request().query(`
@@ -1454,19 +1355,17 @@ router.post("/liquidar", async (req, res) => {
       FROM dbo.LiquidacionClientesCab
       WHERE Codigo LIKE 'LQ-%'
     `);
-
     const lastNum = codeResult.recordset?.[0]?.lastNum || 0;
-    const nextNum = lastNum + 1;
-    const codigo = `LQ-${String(nextNum).padStart(5, "0")}`;
+    const codigo = `LQ-${String(lastNum + 1).padStart(5, "0")}`;
 
-    // 9) Insertar CAB + DET dentro de una transacción
+    // 9) Transacción e Insert
     const tx = new sql.Transaction(poolFact);
     await tx.begin();
 
     try {
       const IdLiquidacion = crypto.randomUUID();
 
-      // CABECERA
+      // INSERT CABECERA
       const reqCab = new sql.Request(tx);
       await reqCab
         .input("IdLiquidacion", sql.UniqueIdentifier, IdLiquidacion)
@@ -1482,81 +1381,34 @@ router.post("/liquidar", async (req, res) => {
         .input("Codigo", sql.NVarChar, codigo)
         .query(`
           INSERT INTO dbo.LiquidacionClientesCab (
-            IdLiquidacion,
-            FechaLiquidacion,
-            Desde,
-            Hasta,
-            CondicionPago,
-            Usuario,
-            Subtotal,
-            IGV,
-            Total,
-            Grupos,
-            Pacientes,
-            Codigo,
-            Estado
+            IdLiquidacion, FechaLiquidacion, Desde, Hasta, CondicionPago,
+            Usuario, Subtotal, IGV, Total, Grupos, Pacientes, Codigo, Estado
           )
           VALUES (
-            @IdLiquidacion,
-            SYSDATETIME(),
-            @Desde,
-            @Hasta,
-            @CondicionPago,
-            @Usuario,
-            @Subtotal,
-            @IGV,
-            @Total,
-            @Grupos,
-            @Pacientes,
-            @Codigo,
-            'VIGENTE'
+            @IdLiquidacion, SYSDATETIME(), @Desde, @Hasta, @CondicionPago,
+            @Usuario, @Subtotal, @IGV, @Total, @Grupos, @Pacientes, @Codigo, 'VIGENTE'
           )
         `);
 
-      // DETALLE
+      // INSERT DETALLES
       for (const r of rowsToLiquidate) {
         const rq = new sql.Request(tx);
-
         await rq
           .input("IdLiquidacion", sql.UniqueIdentifier, IdLiquidacion)
           .input("Nro", sql.NVarChar, r.nro || "")
           .input("Documento", sql.NVarChar, r.documento || "")
           .input("Paciente", sql.NVarChar, r.paciente || "")
           .input("Cliente", sql.NVarChar, r.cliente || "")
-          .input(
-            "UnidadProduccion",
-            sql.NVarChar,
-            r.unidadProduccion || ""
-          )
-          .input(
-            "TipoEvaluacion",
-            sql.NVarChar,
-            r.tipoEvaluacion || ""
-          )
+          .input("UnidadProduccion", sql.NVarChar, r.unidadProduccion || "")
+          .input("TipoEvaluacion", sql.NVarChar, r.tipoEvaluacion || "")
           .input("Sede", sql.NVarChar, r.sedeNombre || "")
           .input("Protocolo", sql.NVarChar, r.protocolo || "")
-          .input(
-            "FechaInicio",
-            sql.Date,
-            r.fechaInicio || null
-          )
-          .input(
-            "DescripcionPrestacion",
-            sql.NVarChar,
-            r.descripcionPrestacion || ""
-          )
-          .input("Importe", sql.Decimal(18, 2), r.importe || 0)
-          .input(
-            "CondicionPago",
-            sql.NVarChar,
-            r.condicionPago || ""
-          )
+          .input("FechaInicio", sql.Date, r.fechaInicio || null)
+          .input("DescripcionPrestacion", sql.NVarChar, r.descripcionPrestacion || "")
+          .input("Importe", sql.Decimal(18, 2), Number(r.importe || 0))
+          .input("CondicionPago", sql.NVarChar, r.condicionPago || "")
           .input("RucCliente", sql.NVarChar, r.rucCliente || "")
-          .input(
-            "RazonSocial",
-            sql.NVarChar,
-            r.razonSocial || r.cliente || ""
-          )
+          .input("RazonSocial", sql.NVarChar, r.razonSocial || "")
           .input("Evaluador", sql.NVarChar, r.evaluador || "")
           .query(`
             INSERT INTO dbo.LiquidacionClientesDet (
@@ -1576,54 +1428,22 @@ router.post("/liquidar", async (req, res) => {
 
       await tx.commit();
 
-      // 10) Actualizar estado de pendientes liquidados
-      // Marcar como LIQUIDADO los pendientes que se incluyeron en esta liquidación
-      const pendientesLiquidados = rowsToLiquidate.filter(r => r.origenPendiente);
-      
-      if (pendientesLiquidados.length > 0) {
-        for (const r of pendientesLiquidados) {
-          await poolFact
-            .request()
-            .input("Nro", sql.NVarChar, r.nro)
-            .input("Documento", sql.NVarChar, r.documento)
-            .query(`
-              UPDATE dbo.LiquidacionClientesPendientes
-              SET Estado = 'LIQUIDADO',
-                  UpdatedAt = SYSDATETIME()
-              WHERE Nro = @Nro
-                AND ISNULL(Documento,'') = ISNULL(@Documento,'')
-                AND Estado IN ('PENDIENTE', 'REACTIVADO');
-            `);
-        }
-      }
-
       return res.json({
         ok: true,
         message: "Liquidación registrada correctamente.",
         idLiquidacion: IdLiquidacion,
         codigo,
         subtotal,
-        igv,
         total,
         grupos,
         pacientes,
       });
-    } catch (errTx) {
-      try {
-        if (!tx._aborted) {
-          await tx.rollback();
-        }
-      } catch (rbErr) {
-        console.error("Error al hacer rollback en /liquidar:", rbErr);
-      }
 
-      console.error("Error en transacción /liquidar:", errTx);
-      return res.status(500).json({
-        ok: false,
-        message: "Error al registrar la liquidación.",
-        debug: errTx.message,
-      });
+    } catch (errTx) {
+      if (!tx._aborted) await tx.rollback();
+      throw errTx; // Lanzar para que lo capture el catch general
     }
+
   } catch (err) {
     console.error("Error general en /liquidar:", err);
     return res.status(500).json({
@@ -1633,6 +1453,7 @@ router.post("/liquidar", async (req, res) => {
     });
   }
 });
+
 /** 
  * GET /api/clientes/liquidaciones
  * Lista cabeceras de liquidación de clientes (histórico).
