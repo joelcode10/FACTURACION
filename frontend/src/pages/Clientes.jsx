@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect,useRef } from "react";
 import {
   fetchClientesProcess,
   saveExclusions,
@@ -18,7 +18,7 @@ export default function Clientes() {
   const [condicionPago, setCondicionPago] = useState("TODAS");
   // Estados de prestación seleccionados (multi-check)
   const [estadosSeleccionados, setEstadosSeleccionados] = useState([]); 
-  const [dropdownEstadosOpen, setDropdownEstadosOpen] = useState(false);
+  
   const [liquidando, setLiquidando] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -26,7 +26,10 @@ export default function Clientes() {
   
   const [exportando, setExportando] = useState(false);
 const [savingExclusions, setSavingExclusions] = useState(false);
-const [anulandoPendienteKey, setAnulandoPendienteKey] = useState(null);
+const [estadosPrestacion, setEstadosPrestacion] = useState([]); // Array para los estados seleccionados
+  const [dropdownOpen, setDropdownOpen] = useState(false);        // Booleano para abrir/cerrar el menú
+  const [availableEstados, setAvailableEstados] = useState([]);   // Lista de opciones disponibles (ej: Liquidado, No Liq)
+
   // datos del backend
   const [groups, setGroups] = useState([]);
   const [detailsByGroupId, setDetailsByGroupId] = useState({});
@@ -60,6 +63,16 @@ const [anulandoPendienteKey, setAnulandoPendienteKey] = useState(null);
   // Esto deja el filtro de estado de prestación en "mostrar todos"
   setEstadosSeleccionados([]);
 }, [filters]);
+// --- Función auxiliar para reusar lógica de filtrado ---
+  function cumpleFiltroEstado(row) {
+    if (estadosPrestacion.length === 0) return true; // Si no hay filtro, pasa todo
+    
+    let st = (row.estadoPrestacion || "SIN ESTADO").trim().toUpperCase();
+    if (st === "ATENDIDO/RESULT") st = "ATENDIDO/RESUL"; // Parche compatibilidad
+    
+    return estadosPrestacion.includes(st);
+  }
+  
   // Cargar TODO el estado guardado al montar el módulo
 useEffect(() => {
   try {
@@ -79,6 +92,24 @@ useEffect(() => {
     console.error("Error restaurando estado:", e);
   }
 }, []);
+// 1. Creamos una referencia para "marcar" el filtro en la pantalla
+  const filterRef = useRef(null);
+
+  // 2. Este useEffect detecta los clics en toda la pantalla
+  useEffect(() => {
+    function handleClickOutside(event) {
+      // Si el filtro existe y el clic fue FUERA de él -> cerramos
+      if (filterRef.current && !filterRef.current.contains(event.target)) {
+        setDropdownOpen(false);
+      }
+    }
+    // Activamos el "oído" del documento
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      // Limpiamos al salir
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
  useEffect(() => {
   try {
     const data = {
@@ -127,78 +158,86 @@ useEffect(() => {
       setLoading(false);
     }
   }
+  // === DETECTAR ESTADOS DISPONIBLES (Definitivo) ===
+  useEffect(() => {
+    // 1. Obtenemos todas las filas
+    const allRows = Object.values(detailsByGroupId || {}).flat();
 
- const viewGroups = useMemo(() => {
-  const result = [];
+    if (allRows.length > 0) {
+      // 2. Extraemos el 'estadoPrestacion' que ahora tu backend envía correctamente
+      const uniqueEstados = [...new Set(allRows.map(r => 
+        r.estadoPrestacion || "SIN ESTADO"
+      ))].filter(x => x !== "SIN ESTADO").sort();
 
-  for (const g of groups) {
-    // 1) Filtro por cliente
-    if (fCliente !== "TODOS" && g.cliente !== fCliente) continue;
-    // 2) Filtro por tipo de evaluación
-    if (fTipo !== "TODOS" && g.tipoEvaluacion !== fTipo) continue;
-
-    const allRows = detailsByGroupId[g.id] || [];
-
-    // 3) Filtro por sede (usa las filas)
-    if (fSede !== "TODOS") {
-      const okSede = allRows.some((r) => r.sedeNombre === fSede);
-      if (!okSede) continue;
+      setAvailableEstados(uniqueEstados);
+    } else {
+      setAvailableEstados([]);
     }
+  }, [detailsByGroupId]);
+const viewGroups = useMemo(() => {
+    const result = [];
 
-    // 4) Filtro por Estado de la prestación
-    let usedRows = allRows;
-    if (estadosSeleccionados.length > 0) {
-      usedRows = allRows.filter((r) =>
-        estadosSeleccionados.includes(r.estadoPrestacion || "")
-      );
-      // si con el filtro ya no queda ninguna fila, el grupo no se muestra
-      if (usedRows.length === 0) continue;
-    }
+    for (const g of groups) {
+      // 1. Filtros básicos
+      if (fCliente !== "TODOS" && g.cliente !== fCliente) continue;
+      if (fTipo !== "TODOS" && g.tipoEvaluacion !== fTipo) continue;
 
-    // 5) Calcular importeVisible según las filas filtradas
-    let importeVisible = g.importe; // por defecto, sin filtro
+      const allRows = detailsByGroupId[g.id] || [];
+      if (fSede !== "TODOS") {
+        const okSede = allRows.some((r) => r.sedeNombre === fSede);
+        if (!okSede) continue;
+      }
 
-    if (estadosSeleccionados.length > 0) {
-      let importeTotal = 0;
-      let importeDisponible = 0;
-      let importeLiquidado = 0;
+      // 2. FILTRO POR ESTADO DE PRESTACIÓN
+      let usedRows = allRows;
 
+      if (estadosPrestacion.length > 0) {
+        usedRows = allRows.filter((r) => {
+          let st = (r.estadoPrestacion || "SIN ESTADO").trim().toUpperCase();
+          if (st === "ATENDIDO/RESULT") st = "ATENDIDO/RESUL";
+          return estadosPrestacion.includes(st);
+        });
+        if (usedRows.length === 0) continue;
+      }
+
+      // 3. RECALCULAR IMPORTES (Lógica Visual)
+      let sumTotal = 0;
+      let sumLiquidado = 0;
+      let sumDisponible = 0;
+      
       for (const r of usedRows) {
         const monto = Number(r.precioCb || 0);
-        importeTotal += monto;
-
-        const esPendiente = !!r.isPendiente;
-        const esLiquidado = !!r.estaLiquidado;
-
-        // misma lógica que en el backend:
-        if (!esPendiente && !esLiquidado) {
-          importeDisponible += monto;
+        sumTotal += monto;
+        
+        if (r.estaLiquidado) {
+            sumLiquidado += monto;
+        } else if (!r.isPendiente) {
+            // Si no es liquidado y NO es excluido (pendiente), es disponible
+            sumDisponible += monto;
         }
-        if (esLiquidado) {
-          importeLiquidado += monto;
-        }
+        // Si r.isPendiente es true, no suma a disponible ni liquidado, se queda en el limbo (amarillo)
       }
 
-      // Respetamos la lógica de estadoLiquidado del backend
+      // 4. DECIDIR QUÉ MOSTRAR EN LA COLUMNA "IMPORTE"
+      let importeVisible = 0;
+
       if (g.estadoLiquidado === "LIQUIDADO") {
-        importeVisible = importeTotal;
+          // Si está cerrado, mostramos el Total facturado
+          importeVisible = sumLiquidado; // O sumTotal, según prefieras ver historial
       } else if (g.estadoLiquidado === "PARCIAL") {
-        importeVisible = importeLiquidado;
+          // CORRECCIÓN PUNTO 3: Si es parcial, mostramos LO QUE SE HA LIQUIDADO
+          // (El usuario pidió: "deberia mostrar el importe liquidado")
+          importeVisible = sumLiquidado; 
       } else {
-        // "NO"
-        importeVisible = importeDisponible;
+          // Si NO está liquidado, mostramos lo DISPONIBLE para cobrar
+          importeVisible = sumDisponible;
       }
+      
+      result.push({ ...g, importeVisible });
     }
 
-    result.push({
-      ...g,
-      importeVisible,
-    });
-  }
-
-  return result;
-}, [groups, detailsByGroupId, fCliente, fTipo, fSede, estadosSeleccionados]);
-
+    return result;
+  }, [groups, detailsByGroupId, fCliente, fTipo, fSede, estadosPrestacion]);
   // totales (sobre los seleccionados visibles)
   const subtotal = useMemo(() => {
   let s = 0;
@@ -228,234 +267,120 @@ useEffect(() => {
     });
   }
 
-  async function openDetalle(id) {
-  const grp = groups.find((g) => g.id === id);
-  if (!grp) return;
-
-  setDetailGroupId(id);
-  setDetailOpen(true);
-
-  try {
-    // 1) Llamamos al nuevo endpoint que trae:
-    //    - rowsNormales (del SP)
-    //    - rowsPendientes (tabla LiquidacionClientesPendientes)
-    const resp = await fetchDetalleConPendientes({
-      from,
-      to,
-      cliente: grp.cliente,
-      unidad: grp.unidadProduccion,
-      tipo: grp.tipoEvaluacion,
-      sede: grp.sedeNombre || "",
-    });
-
-    if (!resp?.ok) {
-      console.error(resp?.message || "Error al cargar detalle con pendientes.");
-      // si quieres, aquí podrías mostrar un mensaje en pantalla
-      return;
-    }
-
-    const rowsNormales = resp.rowsNormales || [];
-    const rowsPendientes = resp.rowsPendientes || [];
-    // ⚠️ Separar pendientes "del periodo actual" vs "periodos anteriores"
-const rowsPendientesActual = rowsPendientes.filter(
-  (r) => Number(r.EsPendienteActual) === 1
-);
-const rowsPendientesPrevios = rowsPendientes.filter(
-  (r) => Number(r.EsPendienteActual) !== 1
-);
-
-// Claves para saber quién es pendiente ACTUAL y quién viene de periodo anterior
-const pendientesKeysActual = new Set(
-  rowsPendientesActual.map((r) => {
-    const nro = (r.Nro || r.nro || "").toString().trim();
-    const doc = (r.Documento || r.documento || "").toString().trim();
-    return `${nro}||${doc}`;
-  })
-);
-
-const pendientesKeysPrevios = new Set(
-  rowsPendientesPrevios.map((r) => {
-    const nro = (r.Nro || r.nro || "").toString().trim();
-    const doc = (r.Documento || r.documento || "").toString().trim();
-    return `${nro}||${doc}`;
-  })
-);
-    // NUEVO: solo pendientes del período actual
-  const pendientesKeys = new Set(
-  rowsPendientes
-    .filter((r) => Number(r.EsPendienteActual) === 1)
-    .map((r) => {
-      const nro = (r.Nro || r.nro || "").trim();
-      const doc = (r.Documento || r.documento || "").trim();
-      return `${nro}||${doc}`;
-    })
-);
-
-    // 3) Combinamos:
-    //    a) filas normales del SP
-    //    b) filas pendientes que no vengan ya en el SP (caso raro)
-    const combined = [];
  
-   rowsNormales.forEach((r) => {
-  const nro = (r.Nro || r.nro || "").toString().trim();
-  const doc = (
-    r.Documento ||
-    r["Documento"] ||
-    r["N° Documento"] ||
-    ""
-  ).toString().trim();
 
-  const key = `${nro}||${doc}`;
+ async function openDetalle(id) {
+    const grp = groups.find((g) => g.id === id);
+    if (!grp) return;
 
-  const esPendienteActual = pendientesKeysActual.has(key);
-  const vieneDePendientePrevio = pendientesKeysPrevios.has(key);
+    setDetailGroupId(id);
+    setDetailOpen(true);
 
-  combined.push({
-    nro,
-    fechaInicio: r["Fecha Inicio"] || r.FechaInicio || null,
-    cliente: grp.cliente,
-    rucCliente: r["RUC DEL CLIENTE"] || r.RucCliente || null,
-    unidadProduccion: grp.unidadProduccion,
-    tipoEvaluacion: grp.tipoEvaluacion,
-    condicionPago:
-      r["Condición de Pago"] || r["Condicion de Pago"] || "",
-    tipoDocumento: r["Tipo de Documento"] || "",
-    documento: doc,
-    paciente: r["Paciente"] || r.Paciente,
-    evaluador: r["Evaluador"] || r.Evaluador,
-    precioCb: Number(
-      r["Importe"] || r["Precio CB"] || r.Importe || 0
-    ),
-    sedeNombre: r["Sede"] || grp.sedeNombre,
-    estadoPrestacion: r["Estado de la Prestación"] || r.estadoPrestacion || "",
+    try {
+      const resp = await fetchDetalleConPendientes({
+        from, to,
+        cliente: grp.cliente,
+        unidad: grp.unidadProduccion,
+        tipo: grp.tipoEvaluacion,
+        sede: grp.sedeNombre || "",
+      });
 
-    // ⚠️ solo los pendientes del PERIODO ACTUAL se bloquean
-    isPendiente: esPendienteActual,
-    // ⚠️ viene de LiquidacionClientesPendientes de un periodo anterior
-    fromPendientePrevio: vieneDePendientePrevio,
-  });
-});
-    rowsPendientes.forEach((r) => {
-  const nro = (r.Nro || "").toString().trim();
-  const doc = (r.Documento || "").toString().trim();
-  const key = `${nro}||${doc}`;
+      if (!resp?.ok) return;
 
-  const yaExiste = combined.some(
-    (x) => `${x.nro || ""}||${x.documento || ""}` === key
-  );
-  if (yaExiste) return;
+      const rowsNormales = resp.rowsNormales || [];
+      const combined = [];
+       const newExclState = new Map(exclState);
 
-  const esPendienteActual = Number(r.EsPendienteActual) === 1;
-  const vieneDePendientePrevio = !esPendienteActual;
+      rowsNormales.forEach((r) => {
+        const nroVal = r.nro || r.Nro || "";
+        const docVal = r.documento || r.Documento || "";
+        
+        const nro = nroVal.toString().trim();
+        const doc = docVal.toString().trim();
+        const key = `${nro}||${doc}`;
 
-  combined.push({
-    nro,
-    fechaInicio: r.FechaInicio || null,
-    cliente: r.Cliente || grp.cliente,
-    rucCliente: r.RucCliente || null,
-    unidadProduccion: r.UnidadProduccion || grp.unidadProduccion,
-    tipoEvaluacion: r.TipoEvaluacion || grp.tipoEvaluacion,
-    condicionPago: r.CondicionPago || "",
-    tipoDocumento: "",
-    documento: doc,
-    paciente: r.Paciente,
-    evaluador: r.Evaluador || "",
-    precioCb: Number(r.Importe || 0),
-    sedeNombre: r.Sede || grp.sedeNombre,
+       if (r.isPendiente) {
+            newExclState.set(key, true);
+        }
 
-    // ⚠️ igual que arriba:
-    isPendiente: esPendienteActual,       // solo bloqueamos si es del periodo actual
-    estadoPrestacion: r.EstadoPrestacion || "Pendiente",
-    fromPendientePrevio: vieneDePendientePrevio, // pero sabemos que viene de antes
-  });
-});
-    // 4) Guardamos el detalle completo (normales + pendientes) para este grupo
-    setDetailsByGroupId((prev) => ({
-      ...prev,
-      [id]: combined,
-    }));
+        combined.push({
+           nro,
+            // CORRECCIÓN CRÍTICA: Mapeo de campos antiguos vs nuevos
+            fechaInicio: r.fechaInicio || r["Fecha Inicio"], 
+            cliente: grp.cliente,
+            documento: doc,
+            paciente: r.paciente || r["Paciente"] || "", // <-- Esto arregla que desaparezca el nombre
+            
+            // CORRECCIÓN DE IMPORTE:
+            precioCb: Number(r.importe || r.Importe || r.precioCb || r.PrecioCB || 0),
+            
+            // Datos extra
+            protocolo: r.protocolo || r.Protocolo || "",
+            descripcionPrestacion: r.descripcionPrestacion || r["Descripción de la Prestación"] || "",
+            condicionPago: r.condicionPago || r["Condición de Pago"] || "",
+            estadoPrestacion: r.estadoPrestacion || "ATENDIDO",
 
-    // 5) Inicializamos el estado de exclusiones:
-    //    - Si ya es pendiente → lo dejamos marcado en true
-    const map = new Map();
-combined.forEach((r) => {
-  const key = `${r.nro || ""}||${r.documento || ""}`;
+            // Estados lógicos
+            isPendiente: r.isPendiente || false,
+            estaLiquidado: r.estaLiquidado || false,
+            origenPendiente: r.origenPendiente || false,
+            idPendiente: r.idPendiente || null
+        });
+      });
 
-  // ✅ Marcar como "No liquidar" solo si es pendiente del periodo actual
-  //    y NO es un pendiente arrastrado de un periodo anterior.
-  if (r.isPendiente && !r.origenPendiente && !r.fromPendientePrevio) {
-    map.set(key, true);
+      setExclState(newExclState); // Actualizamos los checks visuales
+      setDetailsByGroupId((prev) => ({ ...prev, [id]: combined }));
+
+    } catch (err) {
+      console.error("Error al abrir detalle:", err);
+    }
   }
-});
-setExclState(map);
-  } catch (err) {
-    console.error("Error al abrir detalle con pendientes:", err);
-    // si quieres, muestra mensaje de error en pantalla
-  }
-}
 
   function closeDetalle() {
     setDetailOpen(false);
     setDetailGroupId(null);
-    setExclState(new Map());
+    // setExclState(new Map()); // <--- COMENTA O BORRA ESTA LÍNEA
   }
 
   const patientsInGroup = useMemo(() => {
-  if (!detailGroupId) return [];
+    if (!detailGroupId) return [];
 
-  const baseRows = detailsByGroupId[detailGroupId] || [];
+    const baseRows = detailsByGroupId[detailGroupId] || [];
 
-  // 🔹 Aplicar el MISMO filtro de estados que en la grilla
-  const rows =
-    estadosSeleccionados.length > 0
-      ? baseRows.filter((r) =>
-          estadosSeleccionados.includes(r.estadoPrestacion || "")
-        )
-      : baseRows;
+    // 1. APLICAMOS EL MISMO FILTRO QUE EN LA TABLA PRINCIPAL
+    // Solo procesamos las filas que cumplen con el estado seleccionado
+    const rows = baseRows.filter(r => cumpleFiltroEstado(r));
 
-  const acc = new Map();
+    const acc = new Map();
 
-  for (const r of rows) {
-    const k = `${r.paciente || ""}||${r.documento || ""}||${r.nro || ""}`;
+    for (const r of rows) {
+      const k = `${r.paciente || ""}||${r.documento || ""}||${r.nro || ""}`;
 
-    const prev =
-      acc.get(k) || {
+      const prev = acc.get(k) || {
         paciente: r.paciente,
         documento: r.documento,
         nro: r.nro,
         importe: 0,
-        // Pendiente EN el periodo actual
         isPendiente: false,
-        // Viene arrastrado de otro periodo
         origenPendiente: false,
-        // Fecha de inicio mínima
         fechaInicio: r.fechaInicio || null,
       };
 
-    // 💰 Sumar solo las filas que pasaron el filtro
-    prev.importe += Number(r.precioCb || r.importe || 0);
+      prev.importe += Number(r.precioCb || r.importe || 0);
 
-    if (r.isPendiente) {
-      prev.isPendiente = true;
+      if (r.isPendiente) prev.isPendiente = true;
+      if (r.origenPendiente || r.fromPendientePrevio) prev.origenPendiente = true;
+
+      if (r.fechaInicio && (!prev.fechaInicio || new Date(r.fechaInicio) < new Date(prev.fechaInicio))) {
+        prev.fechaInicio = r.fechaInicio;
+      }
+
+      acc.set(k, prev);
     }
 
-    if (r.origenPendiente || r.fromPendientePrevio) {
-      prev.origenPendiente = true;
-    }
+    return Array.from(acc.values());
+  }, [detailGroupId, detailsByGroupId, estadosPrestacion]); // <--- Dependencia clave
 
-    if (
-      r.fechaInicio &&
-      (!prev.fechaInicio ||
-        new Date(r.fechaInicio) < new Date(prev.fechaInicio))
-    ) {
-      prev.fechaInicio = r.fechaInicio;
-    }
-
-    acc.set(k, prev);
-  }
-
-  return Array.from(acc.values());
-}, [detailGroupId, detailsByGroupId, estadosSeleccionados]);
 // Grupo actual y si es editable (solo cuando estadoLiquidado === "NO")
   const grupoActual = useMemo(
     () => groups.find((g) => g.id === detailGroupId) || null,
@@ -473,115 +398,183 @@ setExclState(map);
     });
   }
   async function handleAnularPendiente(p) {
-  try {
-    // 1) Buscamos datos en las filas originales del grupo
-    const rows = detailsByGroupId[detailGroupId] || [];
+    // 1. Validación de seguridad: No tocar si ya está liquidado
+    if (grupoActual && grupoActual.estadoLiquidado !== "NO") {
+       alert("No se puede modificar un grupo ya liquidado.");
+       return;
+    }
 
     let nro = p.nro;
     let documento = p.documento;
+    const importe = Number(p.importe || 0);
 
-    // Si falta alguno, lo buscamos en las filas originales
+    // Búsqueda de respaldo si faltan datos (tu lógica original)
     if (!nro || !documento) {
+      const rows = detailsByGroupId[detailGroupId] || [];
       const match = rows.find((r) => {
         const docRow = (r.documento || r.Documento || "").trim();
         const docP   = (p.documento || "").trim();
         const pacRow = (r.paciente || "").trim();
         const pacP   = (p.paciente || "").trim();
-
         return docRow && docRow === docP && pacRow === pacP;
       });
-
       if (match) {
         nro = (match.nro || match.Nro || "").trim();
         documento = (match.documento || match.Documento || "").trim();
       }
     }
 
-    // 2) Si aún falta algo, no podemos anular
-    if (!nro || !documento) {
-      alert("No se puede anular: falta Nro o Documento.");
-      return;
-    }
+    if (!nro || !documento) return alert("Faltan datos para anular.");
 
-    // 3) Llamamos al backend
-    await anularPendiente({ nro, documento });
+    try {
+      // 2. Llamada al Backend (Solo acción, sin recarga masiva)
+      await anularPendiente({ nro, documento });
 
-    // 4) Actualizamos el estado local: ese paciente deja de estar marcado
-    setExclState((prev) => {
-      const m = new Map(prev);
+      // 3. ACTUALIZACIÓN INSTANTÁNEA (Sin esperar al servidor)
       const key = `${nro}||${documento}`;
-      m.set(key, false);
-      return m;
-    });
 
-    alert("Pendiente anulado correctamente.");
+      // A) Quitar el Check visualmente
+      setExclState((prev) => {
+        const m = new Map(prev);
+        m.set(key, false); // false = Habilitado para liquidar
+        return m;
+      });
 
-    // 5) Opcional: refrescar el resumen para que desaparezca de la liquidación
-    await handleProcess();
-  } catch (err) {
-    console.error("Error al anular pendiente:", err);
-    alert("Error al anular pendiente.");
-  }
-}
-  async function saveExclusionsClick() {
-  try {
-    // 🔒 No permitir cambios si el grupo ya está liquidado o parcial
-    if (grupoActual && grupoActual.estadoLiquidado !== "NO") {
-      alert(
-        "No puedes modificar pendientes de un grupo que ya está liquidado o parcial. " +
-        "Primero anula la liquidación y vuelve a procesar."
+      // B) Actualizar la lista interna para que desaparezca el botón "Anular"
+      // Al poner isPendiente: false, el botón deja de renderizarse
+      setDetailsByGroupId((prev) => {
+        const newDetails = { ...prev };
+        if (newDetails[detailGroupId]) {
+          newDetails[detailGroupId] = newDetails[detailGroupId].map((r) => {
+            const rKey = `${r.nro || ""}||${r.documento || ""}`;
+            if (rKey === key) {
+               return { ...r, isPendiente: false, origenPendiente: false }; 
+            }
+            return r;
+          });
+        }
+        return newDetails;
+      });
+
+      // C) Sumar el importe al total del grupo en la pantalla de atrás
+      setGroups((prevGroups) => 
+        prevGroups.map((g) => {
+          if (g.id === detailGroupId) {
+             const nuevoDisponible = (g.importeDisponible || 0) + importe;
+             return {
+               ...g,
+               importeDisponible: nuevoDisponible,
+               importe: nuevoDisponible, // Actualiza el número que ves en la tabla principal
+             };
+          }
+          return g;
+        })
       );
+
+      // (Opcional) Feedback rápido
+      // alert("Paciente habilitado."); 
+
+    } catch (err) {
+      console.error("Error al anular pendiente:", err);
+      alert("Error al intentar habilitar el paciente.");
+    }
+  }
+  // ----------------------------------------------------------------------
+// 1. REEMPLAZA ESTA FUNCIÓN: saveExclusionsClick
+// ----------------------------------------------------------------------
+async function saveExclusionsClick() {
+  try {
+    if (grupoActual && grupoActual.estadoLiquidado !== "NO") {
+      alert("No puedes modificar pendientes de un grupo liquidado/parcial. Anula primero.");
       return;
     }
     setSavingExclusions(true);
 
     const rows = detailsByGroupId[detailGroupId] || [];
     const grp = groups.find((g) => g.id === detailGroupId) || {};
-    const items = [];
+    const itemsToSend = [];
 
+    // Recopilamos datos para el backend
     for (const p of patientsInGroup) {
       const k = `${p.nro || ""}||${p.documento || ""}`;
       const marcado = !!exclState.get(k);
 
-      const matchingRow =
-        rows.find(
-          (r) =>
-            (r.nro || "") === (p.nro || "") &&
-            (r.documento || "") === (p.documento || "")
-        ) || {};
+      // Buscamos datos completos en 'rows'
+      const matchingRow = rows.find(
+          (r) => (r.nro || "") === (p.nro || "") && (r.documento || "") === (p.documento || "")
+      ) || {};
 
-      const nroFinal = p.nro || matchingRow.nro || "";
-
-      items.push({
-        nro: nroFinal,
+      itemsToSend.push({
+        nro: p.nro || matchingRow.nro || "",
         documento: p.documento || matchingRow.documento || "",
         exclude: marcado,
         paciente: p.paciente || matchingRow.paciente || "",
         cliente: grp.cliente || matchingRow.cliente || "",
-        unidadProduccion:
-          grp.unidadProduccion || matchingRow.unidadProduccion || "",
-        tipoEvaluacion:
-          grp.tipoEvaluacion || matchingRow.tipoEvaluacion || "",
+        unidadProduccion: grp.unidadProduccion || matchingRow.unidadProduccion || "",
+        tipoEvaluacion: grp.tipoEvaluacion || matchingRow.tipoEvaluacion || "",
         sedeNombre: matchingRow.sedeNombre || grp.sedeNombre || "",
         importe: p.importe ?? matchingRow.precioCb ?? 0,
         createdBy: "admin",
-        fechaInicio:
-        p.fechaInicio ||
-        matchingRow.fechaInicio ||
-        matchingRow.FechaInicio ||
-        null,
+        fechaInicio: p.fechaInicio || matchingRow.fechaInicio || null,
       });
     }
 
-    await saveExclusions({
-      from,
-      to,
-      condicionPago,
-      items,
+    // 1. Guardar en BD (backend optimizado)
+    await saveExclusions({ from, to, condicionPago, items: itemsToSend });
+
+    // 2. ACTUALIZACIÓN OPTIMISTA (Sin recargar toda la búsqueda)
+    // Actualizamos el detalle interno del grupo
+    setDetailsByGroupId((prev) => {
+      const newDetails = { ...prev };
+      if (newDetails[detailGroupId]) {
+        newDetails[detailGroupId] = newDetails[detailGroupId].map((r) => {
+          const k = `${r.nro || ""}||${r.documento || ""}`;
+          // Si está en el mapa de exclusiones, actualizamos su flag 'isPendiente'
+          if (exclState.has(k)) {
+            const isExcluded = exclState.get(k);
+            return { ...r, isPendiente: isExcluded };
+          }
+          return r;
+        });
+      }
+      return newDetails;
     });
 
+    // Actualizamos los totales del GRUPO en la tabla principal
+    setGroups((prevGroups) => 
+      prevGroups.map((g) => {
+        if (g.id === detailGroupId) {
+          // Recalcular importes manualmente
+          let nuevoImporteDisponible = 0;
+          let nuevoImportePendiente = 0;
+          let tienePendientes = false;
+
+          // Usamos 'itemsToSend' que tiene el estado final
+          itemsToSend.forEach(item => {
+             const monto = Number(item.importe || 0);
+             if (item.exclude) {
+               nuevoImportePendiente += monto;
+               tienePendientes = true;
+             } else {
+               nuevoImporteDisponible += monto;
+             }
+          });
+          
+          // Mantenemos el liquidado si hubiera (aunque aquí suele ser 0 si es editable)
+          return {
+            ...g,
+            importeDisponible: nuevoImporteDisponible,
+            importePendiente: nuevoImportePendiente,
+            importe: nuevoImporteDisponible, // Actualizamos lo que ve el usuario
+            tienePendientes: tienePendientes
+          };
+        }
+        return g;
+      })
+    );
+
     closeDetalle();
-    await handleProcess();
+    // 🚫 YA NO LLAMAMOS A handleProcess() PARA QUE SEA RÁPIDO
   } catch (err) {
     console.error(err);
     alert("Error al guardar pendientes.");
@@ -589,20 +582,16 @@ setExclState(map);
     setSavingExclusions(false);
   }
 }
+
+// ----------------------------------------------------------------------
+// 2. REEMPLAZA ESTA FUNCIÓN: liquidarSeleccionados
+// ----------------------------------------------------------------------
 async function liquidarSeleccionados() {
   setMensajeLiq("");
 
-  if (!from || !to) {
-    alert("Primero indica el rango de fechas (desde / hasta).");
-    return;
-  }
+  if (!from || !to) return alert("Indica fechas.");
+  if (!selectedIds.size) return alert("Selecciona grupos.");
 
-  if (!selectedIds.size) {
-    alert("Selecciona al menos un grupo para liquidar.");
-    return;
-  }
-
-  // Filtrar solo grupos NO liquidados
   const groupsMap = new Map(groups.map((g) => [g.id, g]));
   const idsArr = Array.from(selectedIds);
   const idsNoLiquidados = idsArr.filter((id) => {
@@ -610,81 +599,225 @@ async function liquidarSeleccionados() {
     return g && g.estadoLiquidado !== "LIQUIDADO";
   });
 
-  if (!idsNoLiquidados.length) {
-    alert("Todos los grupos seleccionados ya están liquidados.");
-    return;
+  if (!idsNoLiquidados.length) return alert("Grupos ya liquidados.");
+
+  if (!window.confirm(`¿Liquidar ${idsNoLiquidados.length} grupo(s)?`)) return;
+
+  const rowsToSend = [];
+  // Mapa para saber si un grupo quedó PARCIAL
+  const statusPorGrupo = new Map(); // groupId -> "LIQUIDADO" | "PARCIAL"
+
+  for (const groupId of idsNoLiquidados) {
+    const groupData = groupsMap.get(groupId);
+    const rows = detailsByGroupId[groupId] || [];
+    
+    let huboExcluidos = false;
+    // Si el grupo ya tenía pendientes previos que no se tocaron
+    if (groupData.tienePendientes) huboExcluidos = true; 
+
+    for (const r of rows) {
+      const k = `${r.nro || ""}||${r.documento || ""}`;
+      const estaExcluido = !!exclState.get(k) || (r.isPendiente && !exclState.has(k));
+
+      if (!estaExcluido && !r.estaLiquidado) {
+        rowsToSend.push({
+          nro: r.nro,
+          documento: r.documento,
+          paciente: r.paciente,
+          cliente: groupData.cliente,
+          unidadProduccion: groupData.unidadProduccion,
+          tipoEvaluacion: groupData.tipoEvaluacion,
+          sedeNombre: groupData.sedeNombre,
+          protocolo: r.protocolo || "",
+          fechaInicio: r.fechaInicio,
+          descripcionPrestacion: r.descripcionPrestacion || "",
+          importe: Number(r.precioCb || r.importe || 0),
+          condicionPago: r.condicionPago,
+          rucCliente: r.rucCliente,
+          razonSocial: r.razonSocial || groupData.cliente,
+          evaluador: r.evaluador,
+          
+          // OBLIGATORIO: El ID para que el Backend sepa a quién marcar
+          idPendiente: r.idPendiente || null
+        });
+      } else if (estaExcluido) {
+        huboExcluidos = true;
+      }
+    }
+    
+    statusPorGrupo.set(groupId, huboExcluidos ? "PARCIAL" : "LIQUIDADO");
   }
 
-  if (
-    !window.confirm(
-      `¿Confirma liquidar ${idsNoLiquidados.length} grupo(s) en el rango ${from} a ${to}?`
-    )
-  ) {
-    return;
+  if (rowsToSend.length === 0) return alert("No hay pacientes para liquidar.");
+
+  // === AQUÍ ESTÁ EL CAMBIO CLAVE ===
+  // Preparamos la metadata para decirle al Backend: "Oye, este grupo guárdalo como PARCIAL"
+  const groupsMetadata = [];
+  for (const groupId of idsNoLiquidados) {
+      const estado = statusPorGrupo.get(groupId);
+      const g = groupsMap.get(groupId);
+      if (g) {
+          groupsMetadata.push({
+              cliente: g.cliente,
+              unidad: g.unidadProduccion,
+              tipo: g.tipoEvaluacion,
+              sede: g.sedeNombre,
+              estado: estado // <-- Aquí va la decisión ("PARCIAL" o "LIQUIDADO")
+          });
+      }
   }
 
   try {
     setLiquidando(true);
-
     const resp = await liquidarClientes({
-      from,
-      to,
-      condicionPago,
+      from, to, condicionPago,
       selectedIds: idsNoLiquidados,
+      rows: rowsToSend,
+      groupsMetadata: groupsMetadata // <-- IMPORTANTE: Enviamos esto al backend
     });
 
-    if (!resp?.ok) {
-      alert(resp?.message || "Error al registrar la liquidación.");
-      return;
-    }
+    if (!resp?.ok) return alert(resp?.message || "Error.");
 
-    // Mensaje amigable con el código de liquidación
-    setMensajeLiq(
-      `✅ Liquidación registrada correctamente. Código: ${resp.idLiquidacion}`
+    setMensajeLiq(`✅ Liquidación exitosa. Código: ${resp.codigo}`);
+
+    // ACTUALIZACIÓN VISUAL INMEDIATA
+    setGroups((prev) => 
+      prev.map((g) => {
+        if (idsNoLiquidados.includes(g.id)) {
+          const nuevoEstado = statusPorGrupo.get(g.id) || "LIQUIDADO";
+          return {
+            ...g,
+            estadoLiquidado: nuevoEstado, 
+            codigo: resp.codigo,
+            tieneLiquidados: true,
+            // Visualmente sumamos lo disponible al liquidado para que se vea lleno
+            importeLiquidado: (g.importeLiquidado || 0) + (g.importeDisponible || 0),
+            importeDisponible: 0
+          };
+        }
+        return g;
+      })
     );
+    
+    // Marcar filas como liquidadas internamente (para que no se puedan volver a enviar)
+    setDetailsByGroupId((prev) => {
+        const next = { ...prev };
+        idsNoLiquidados.forEach(gid => {
+            if(next[gid]) {
+                next[gid] = next[gid].map(r => {
+                    const k = `${r.nro}||${r.documento}`;
+                    const excl = !!exclState.get(k) || (r.isPendiente && !exclState.has(k));
+                    if(!excl && !r.estaLiquidado) return { ...r, estaLiquidado: true };
+                    return r;
+                })
+            }
+        });
+        return next;
+    });
 
-    // Limpiar selección
     setSelectedIds(new Set());
     setSelectAll(false);
-
-    // Volver a procesar para que el backend marque esos grupos como LIQUIDADO
-    await handleProcess();
   } catch (err) {
-    console.error("Error al liquidar:", err);
-    alert(err.message || "Error al registrar la liquidación.");
+    console.error(err);
+    alert("Error al liquidar: " + err.message);
   } finally {
     setLiquidando(false);
   }
 }
+  // En Clientes.jsx
+
   async function exportarSeleccionados() {
-  if (!selectedIds.size) return;
-  const selectedIdsArr = Array.from(selectedIds);
+    if (!selectedIds.size) return alert("Selecciona al menos un grupo.");
+    
+    const rowsToExport = []; // Enviaremos filas completas, no solo IDs
+    const idsArr = Array.from(selectedIds);
+    let warningSinDetalle = false;
 
-  try {
-    setExportando(true);
-    const blob = await exportLiquidaciones({
-      from,
-      to,
-      condicionPago,
-      selectedIds: selectedIdsArr,
-      estadosPrestacion: estadosSeleccionados,
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "liquidaciones.xlsx";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  } catch (err) {
-    console.error(err);
-    alert("Error al exportar.");
-  } finally {
-    setExportando(false);
+    for (const groupId of idsArr) {
+      const rows = detailsByGroupId[groupId];
+      
+      // Validación: Si el usuario no abrió el detalle, no tenemos datos para exportar
+      if (!rows) {
+        warningSinDetalle = true;
+        continue; 
+      }
+
+      // Datos del grupo para rellenar vacíos si hiciera falta
+      const grp = groups.find(g => g.id === groupId);
+
+      for (const r of rows) {
+        // 1. FILTRO VISUAL: Respetar el filtro de "Estado Prestación" (Combo)
+        if (typeof cumpleFiltroEstado === 'function') {
+             if (!cumpleFiltroEstado(r)) continue; 
+        } else {
+             // Fallback si no tienes la función auxiliar
+             if (estadosPrestacion.length > 0) {
+                let st = (r.estadoPrestacion || "SIN ESTADO").trim().toUpperCase();
+                if (st === "ATENDIDO/RESULT") st = "ATENDIDO/RESUL";
+                if (!estadosPrestacion.includes(st)) continue;
+             }
+        }
+
+        // 2. EXCLUSIÓN MANUAL: Respetar los checks del modal
+        const k = `${r.nro || ""}||${r.documento || ""}`;
+        const estaExcluidoManual = !!exclState.get(k); 
+        const esPendienteNativo = r.isPendiente && !exclState.has(k);
+        
+        // Si NO está excluido, lo exportamos
+        if (!estaExcluidoManual && !esPendienteNativo) {
+           // Agregamos la fila formateada para el Excel
+           rowsToExport.push({
+             ...r,
+             // Aseguramos que lleve los datos del grupo (Cliente, Sede) para la agrupación correcta
+             cliente: grp.cliente,
+             sedeNombre: grp.sedeNombre,
+             unidadProduccion: grp.unidadProduccion,
+             tipoEvaluacion: grp.tipoEvaluacion,
+             // Aseguramos formato numérico
+             importe: Number(r.precioCb || r.importe || 0)
+           });
+        }
+      }
+    }
+
+    if (warningSinDetalle && rowsToExport.length === 0) {
+      alert("Para exportar, primero debes cargar los detalles (abrir 'Ver') de los grupos seleccionados.");
+      return;
+    }
+
+    if (rowsToExport.length === 0) {
+      alert("No hay registros válidos para exportar con los filtros actuales.");
+      return;
+    }
+
+    try {
+      setExportando(true);
+      
+      // CAMBIO: Llamamos a exportLiquidaciones pasando 'rows' en lugar de 'nros'
+      // Asegúrate de que tu api.js soporte esto (ver abajo)
+      const blob = await exportLiquidaciones({
+        from, 
+        to,
+        condicionPago,
+        rows: rowsToExport, // <--- Enviamos la data procesada
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Liquidacion_${from}_${to}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+    } catch (err) {
+      console.error(err);
+      alert("Error al exportar.");
+    } finally {
+      setExportando(false);
+    }
   }
-}
-
 
   const fmtMoney = (n) =>
     Number(n || 0).toLocaleString("es-PE", {
@@ -800,56 +933,64 @@ const fmtDate = (d) => {
                 </option>
               ))}
             </select>
-            {/* Filtro de firma */}
-            {/* Filtro de Estado de la prestación (multi-check) */}
-            <div className="estado-filter">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => setDropdownEstadosOpen((prev) => !prev)}
-              >
-                Estado de la prestación ▾
-              </button>
-
-              {dropdownEstadosOpen && (
-                <div className="estado-dropdown">
-                  {(filters.estadosPrestacion || []).map((est) => {
-                    const checked = estadosSeleccionados.includes(est);
-
-                    return (
-                      <label key={est} className="estado-item">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            const { checked } = e.target;
-                            setEstadosSeleccionados((prev) => {
-                              if (checked) {
-                                // agregar
-                                if (prev.includes(est)) return prev;
-                                return [...prev, est];
-                              } else {
-                                // quitar
-                                const next = prev.filter((x) => x !== est);
-                                return next;
-                              }
-                            });
-                          }}
-                        />
-                        {est}
-                      </label>
-                    );
-                  })}
-                  {/* Opción rápida para limpiar filtro */}
-                  <button
-                    type="button"
-                    className="estado-clear-btn"
-                    onClick={() => setEstadosSeleccionados([])}
-                  >
-                    Mostrar todos
-                  </button>
+           
+           {/* FILTRO ESTADO PRESTACIÓN (DISEÑO HONORARIOS) */}
+            <div 
+              className="estado-filter" 
+              style={{ position: 'relative', minWidth: '200px' }}
+              ref={filterRef} // Referencia para cerrar al hacer clic fuera
+            >
+                <div 
+                  className="form-select" 
+                  style={{
+                    cursor: 'pointer', 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center',
+                    backgroundColor: '#fff',
+                    color: '#333',
+                    height: '42px', // Altura forzada para alinear con otros selects
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    padding: '0 12px'
+                  }}
+                  onClick={() => setDropdownOpen(!dropdownOpen)}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '14px' }}>
+                    {estadosPrestacion.length > 0 
+                      ? `${estadosPrestacion.length} seleccionados` 
+                      : "Estado Prestación"}
+                  </span>
+                  <span style={{ fontSize: '10px', opacity: 0.6 }}>▼</span>
                 </div>
-              )}
+
+                {dropdownOpen && (
+                   <div className="estado-dropdown" style={{
+                     position: 'absolute', top: '100%', left: 0, right: 0,
+                     background: 'white', border: '1px solid #ccc', 
+                     padding: '10px', zIndex: 100, boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
+                     maxHeight: '300px', overflowY: 'auto', borderRadius: '0 0 6px 6px',
+                     marginTop: '4px'
+                   }}>
+                     {/* LAS 4 OPCIONES FIJAS */}
+                     {["ATENDIDO", "ATENDIDO/RESUL", "GENERADO", "PENDIENTE"].map(est => (
+                       <label key={est} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', cursor: 'pointer' }}>
+                         <input 
+                           type="checkbox" 
+                           checked={estadosPrestacion.includes(est)}
+                           onChange={(e) => {
+                             // Importante: stopPropagation para no cerrar el menú al hacer click
+                             // (aunque el ref y el onClick del padre lo manejan, es buena práctica)
+                             if(e.target.checked) setEstadosPrestacion(prev => [...prev, est]);
+                             else setEstadosPrestacion(prev => prev.filter(x => x !== est));
+                           }}
+                           style={{ accentColor: '#2563EB', width:'16px', height:'16px' }}
+                         /> 
+                         <span style={{ fontSize: '13px', color: '#333' }}>{est}</span>
+                       </label>
+                     ))}
+                   </div>
+                )}
             </div>
           </div> 
         </div><br />
@@ -881,15 +1022,27 @@ const fmtDate = (d) => {
                     Sin resultados con los filtros actuales.
                   </td>
                 </tr>
-              ) : (
+              ) : ( 
                 viewGroups.map((g) => (
                   <tr key={g.id}>
-                  <td>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(g.id)}
-                        onChange={() => toggleSelect(g.id)}
-                      />
+                    <td>
+                      {/* SOLUCIÓN: 
+                          1. Checkbox SIEMPRE visible (para poder exportar) 
+                          2. Check verde visible si es LIQUIDADO o PARCIAL 
+                      */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(g.id)}
+                            onChange={() => toggleSelect(g.id)}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          
+                          {/* El check verde aparece en LIQUIDADO y en PARCIAL */}
+                          {(g.estadoLiquidado === "LIQUIDADO" || g.estadoLiquidado === "PARCIAL") && (
+                              <span style={{ color: 'green', fontWeight: 'bold', fontSize: '12px' }}>✓</span>
+                          )}
+                      </div>
                     </td>
                     <td>{g.cliente || "-"}</td>
                     <td>{g.unidadProduccion || "-"}</td>

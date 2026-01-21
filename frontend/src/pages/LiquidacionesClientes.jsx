@@ -5,13 +5,26 @@ import {
   fetchLiquidacionDetalle,
   anularLiquidacion, // Asegúrate de tener esta función en api.js
 } from "../lib/api.js";
+// Clave única para guardar los filtros del histórico
+const STORAGE_KEY_HISTORICO = "historico_filtros_v1";
 
+// Función auxiliar para leer del almacenamiento de forma segura
+function getSavedState() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_HISTORICO);
+    return saved ? JSON.parse(saved) : null;
+  } catch (e) {
+    return null;
+  }
+}
 export default function LiquidacionesClientes() {
   // Filtros de búsqueda
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [condicionPago, setCondicionPago] = useState("TODAS");
-  const [searchCodigo, setSearchCodigo] = useState(""); // 👈 nuevo filtro por código
+  // 1. Leemos lo guardado una sola vez al inicio
+  const saved = getSavedState();
+  const [from, setFrom] = useState(saved?.from || "");
+  const [to, setTo] = useState(saved?.to || "");
+  const [condicionPago, setCondicionPago] = useState(saved?.condicionPago || "TODAS");
+  const [searchCodigo, setSearchCodigo] = useState(saved?.searchCodigo || "");
 
   // Datos
   const [items, setItems] = useState([]); // lista de cabeceras crudas desde backend
@@ -24,6 +37,8 @@ export default function LiquidacionesClientes() {
   const [detailError, setDetailError] = useState("");
   const [detailHeader, setDetailHeader] = useState(null);
   const [detailRows, setDetailRows] = useState([]);
+  // Nuevo filtro: Tipo de Histórico
+  const [historyType, setHistoryType] = useState(saved?.historyType || "CLIENTES"); // Si usas el filtro de tipo
 
   // Para anular con confirmación simple
   const [anulandoId, setAnulandoId] = useState(null);
@@ -60,33 +75,48 @@ export default function LiquidacionesClientes() {
       border: `1px solid ${isAnulada ? "#ffcdd2" : "#c8e6c9"}`,
     };
   };
-
+  // --- FUNCIÓN EXPORTAR (Nueva) ---
+  const handleExportar = (liq) => {
+    // Aquí rediriges a tu ruta de backend que genera el Excel
+    // Ajusta la URL según tus rutas reales
+    const url = `/api/liquidaciones/exportar-excel/${liq.IdLiquidacion}`;
+    window.open(url, "_blank");
+  };
   async function handleBuscar(e) {
     e?.preventDefault?.();
     setError("");
     setLoading(true);
     try {
-      const resp = await fetchLiquidaciones({ from, to, condicionPago });
-      if (!resp?.ok) {
+      // Usamos fetch directamente o crea una función 'fetchHistory' en api.js
+      const params = new URLSearchParams({ from, to, type: historyType });
+      const res = await fetch(`/api/clientes/history?${params}`); // Ajusta la ruta base si es necesario
+      const data = await res.json();
+      
+      if (!data.ok) {
         setItems([]);
-        setError(resp?.message || "No se pudo obtener el histórico.");
+        setError(data.message || "Error al cargar.");
       } else {
-        setItems(resp.items || []);
+        setItems(data.rows || []);
       }
     } catch (err) {
-      console.error(err);
-      setItems([]);
-      setError(err.message || "Error al cargar el histórico.");
+      setError("Error de conexión");
     } finally {
       setLoading(false);
     }
   }
 
   // Cargar últimas liquidaciones al entrar
+  // --- GUARDADO AUTOMÁTICO EN LOCALSTORAGE ---
   useEffect(() => {
-    handleBuscar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const filtersToSave = {
+      from,
+      to,
+      condicionPago,
+      historyType,
+      searchCodigo
+    };
+    localStorage.setItem(STORAGE_KEY_HISTORICO, JSON.stringify(filtersToSave));
+  }, [from, to, condicionPago, historyType, searchCodigo]);
 
   // Filtro local por código
   const filteredItems = useMemo(() => {
@@ -248,83 +278,95 @@ export default function LiquidacionesClientes() {
             <thead>
               <tr>
                 <th>Código</th>
-                <th>Fecha liquidación</th>
+                <th>Fecha Liq.</th> {/* Fecha en que se creó el documento */}
+                
+                {/* Estas columnas ahora sí se llenarán */}
                 <th>Desde</th>
                 <th>Hasta</th>
                 <th>Condición</th>
+                
                 <th style={{ textAlign: "right" }}>Subtotal</th>
                 <th style={{ textAlign: "right" }}>IGV</th>
                 <th style={{ textAlign: "right" }}>Total</th>
-                <th>Grupos</th>
-                <th>Pacientes</th>
-                <th>Estado</th>
-                <th>Detalle</th>
-                <th>Acciones</th>
+                
+                <th style={{ textAlign: "center" }}>Grup.</th>
+                <th style={{ textAlign: "center" }}>Pac.</th>
+                <th style={{ textAlign: "center" }}>Estado</th>
+                
+                <th>Anulado Por</th>
+                
+                {/* DOS COLUMNAS DE ACCIÓN SEPARADAS */}
+                <th style={{ textAlign: "center", width: "50px" }}>Exp.</th>
+                <th style={{ textAlign: "center", width: "50px" }}>Anul.</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={13} className="table-empty">
-                    Cargando...
-                  </td>
-                </tr>
+                <tr><td colSpan={14} className="table-empty">Cargando...</td></tr>
               ) : filteredItems.length === 0 ? (
-                <tr>
-                  <td colSpan={13} className="table-empty">
-                    No hay liquidaciones con los filtros actuales.
-                  </td>
-                </tr>
+                <tr><td colSpan={14} className="table-empty">No hay datos en este periodo.</td></tr>
               ) : (
                 filteredItems.map((liq) => {
                   const estado = (liq.Estado || "").toUpperCase();
                   const isAnulada = estado === "ANULADA";
+
                   return (
-                    <tr key={liq.IdLiquidacion}>
-                      <td className="nowrap">{liq.Codigo || "-"}</td>
-                      <td className="nowrap">
-                        {fmtDate(liq.FechaLiquidacion)}
-                      </td>
-                      <td className="nowrap">{fmtDate(liq.Desde)}</td>
-                      <td className="nowrap">{fmtDate(liq.Hasta)}</td>
+                    <tr key={liq.IdLiquidacion} style={{ opacity: isAnulada ? 0.6 : 1 }}>
+                      <td style={{ fontWeight: 'bold' }}>{liq.Codigo}</td>
+                      
+                      {/* Fecha de Creación (Real) */}
+                      <td>{fmtDate(liq.FechaLiquidacion)}</td>
+                      
+                      {/* Periodo de Atención (Lo que corregimos en el backend) */}
+                      <td>{fmtDate(liq.Desde)}</td>
+                      <td>{fmtDate(liq.Hasta)}</td>
                       <td>{liq.CondicionPago || "-"}</td>
-                      <td style={{ textAlign: "right" }}>
-                        {fmtMoney(liq.Subtotal)}
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        {fmtMoney(liq.IGV)}
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        {fmtMoney(liq.Total)}
-                      </td>
+                      
+                      <td style={{ textAlign: "right" }}>{fmtMoney(liq.Subtotal)}</td>
+                      <td style={{ textAlign: "right" }}>{fmtMoney(liq.IGV)}</td>
+                      <td style={{ textAlign: "right" }}>{fmtMoney(liq.Total)}</td>
+                      
                       <td style={{ textAlign: "center" }}>{liq.Grupos}</td>
                       <td style={{ textAlign: "center" }}>{liq.Pacientes}</td>
-                      <td>
-                        <span style={getEstadoStyle(liq.Estado)}>
-                          {getEstadoLabel(liq.Estado)}
-                        </span>
+                      
+                      <td style={{ textAlign: "center" }}>
+                        <span style={getEstadoStyle(liq.Estado)}>{getEstadoLabel(liq.Estado)}</span>
                       </td>
-                      <td>
-                        <button
-                          className="btn-primary btn-sm"
-                          onClick={() => openDetalle(liq)}
-                        >
-                          Ver detalle
-                        </button>
-                      </td>
-                      <td>
+
+                      {/* Log de Anulación */}
+                      <td style={{ fontSize: '11px', color: '#EF4444', lineHeight:'1.2' }}>
                         {isAnulada ? (
-                          <span>-</span>
-                        ) : (
-                          <button
-                            className="btn-primary btn-sm"
-                            onClick={() => handleAnular(liq)}
-                            disabled={anulandoId === liq.IdLiquidacion}
+                          <>
+                            <strong>{liq.UsuarioAnula}</strong><br/>
+                            <span>{fmtDate(liq.FechaAnulacion)}</span>
+                          </>
+                        ) : "-"}
+                      </td>
+
+                      {/* COLUMNA 1: EXPORTAR */}
+                      <td style={{ textAlign: "center" }}>
+                        <button
+                            className="btn-icon" 
+                            style={{ background:'none', border:'1px solid #ddd', borderRadius:'4px', padding:'4px 8px', cursor:'pointer' }}
+                            title="Descargar Excel"
+                            onClick={() => handleExportar(liq)}
                           >
-                            {anulandoId === liq.IdLiquidacion
-                              ? "Anulando..."
-                              : "Anular"}
+                            📥
                           </button>
+                      </td>
+
+                      {/* COLUMNA 2: ANULAR */}
+                      <td style={{ textAlign: "center" }}>
+                        {!isAnulada && (
+                            <button
+                              className="btn-icon"
+                              style={{ background:'#FEE2E2', border:'1px solid #FECACA', borderRadius:'4px', padding:'4px 8px', color:'#EF4444', cursor:'pointer' }}
+                              title="Anular Liquidación"
+                              onClick={() => handleAnular(liq)}
+                              disabled={anulandoId === liq.IdLiquidacion}
+                            >
+                              ✕
+                            </button>
                         )}
                       </td>
                     </tr>

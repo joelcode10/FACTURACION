@@ -1,677 +1,572 @@
-// src/pages/Mantenimiento.jsx
-import React, { useMemo, useState } from "react";
+import { useState, useEffect } from "react";
+// Asegúrate de agregar estas funciones nuevas a tu api.js
+import { fetchMasterPrestaciones, searchEvaluadores, createTarifa, deleteTarifa } from "../lib/api.js";
+function ConfigCostosAuditoria() {
+  const [costos, setCostos] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-function createMockPrestaciones() {
-  return [
-    {
-      id: "P1",
-      codigo: "LAB-001",
-      descripcion: "Perfil lipídico completo",
-    },
-    {
-      id: "P2",
-      codigo: "LAB-002",
-      descripcion: "Hemograma completo",
-    },
-    {
-      id: "P3",
-      codigo: "LAB-003",
-      descripcion: "Panel 5 drogas",
-    },
-    {
-      id: "P4",
-      codigo: "LAB-004",
-      descripcion: "Glucosa en sangre",
-    },
-  ];
+  // Cargar datos al montar la pestaña
+  useEffect(() => {
+    fetch("/api/config/costos-auditoria")
+      .then((r) => r.json())
+      .then((data) => setCostos(data))
+      .catch((err) => console.error("Error cargando costos:", err));
+  }, []);
+
+  // Manejar cambios en los inputs
+  const handleChange = (tipo, valor) => {
+    setCostos((prev) =>
+      prev.map((c) => (c.TipoExamen === tipo ? { ...c, Costo: valor } : c))
+    );
+  };
+
+  // Guardar en BD
+  const handleGuardar = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch("/api/config/costos-auditoria", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: costos }),
+      });
+      if (res.ok) alert("✅ Costos actualizados correctamente");
+      else alert("Error al guardar");
+    } catch (e) {
+      console.error(e);
+      alert("Error de conexión");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    // CAMBIO AQUÍ: Cambiamos maxWidth: "600px" por "100%"
+    <div className="section-card" style={{ maxWidth: "100%" }}>
+      <h3 className="section-title">Precios Base por Tipo de Examen</h3>
+      <p style={{ marginBottom: "15px", fontSize: "13px", color: "#666" }}>
+        Estos costos se aplicarán automáticamente al buscar en el módulo de Auditorías.
+      </p>
+
+      <div className="table-wrapper">
+        <table className="simple-table" style={{ width: "100%" }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left" }}>Tipo de Examen</th>
+              <th style={{ textAlign: "right", width: "200px" }}>Costo (S/)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {costos.length === 0 ? (
+              <tr><td colSpan={2} className="text-center">Cargando...</td></tr>
+            ) : (
+              costos.map((item) => (
+                <tr key={item.TipoExamen}>
+                  <td style={{ fontWeight: "500" }}>{item.TipoExamen}</td>
+                  <td style={{ textAlign: "right" }}>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="form-input"
+                      style={{ textAlign: "right", width: "100%" }}
+                      value={item.Costo}
+                      onChange={(e) => handleChange(item.TipoExamen, e.target.value)}
+                    />
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: "20px", textAlign: "right" }}>
+        <button 
+          className="btn-primary" 
+          onClick={handleGuardar} 
+          disabled={loading}
+        >
+          {loading ? "Guardando..." : "Guardar Cambios"}
+        </button>
+      </div>
+    </div>
+  );
 }
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 export default function Mantenimiento() {
-  const [tab, setTab] = useState("costos"); // "costos" | "paquetes"
+  const [data, setData] = useState([]); // Lista gigante
+  const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
 
-  // ---------- Prestaciones (mock local) ----------
-  const [prestaciones] = useState(createMockPrestaciones);
-  const [buscarPrestacion, setBuscarPrestacion] = useState("");
-  const [selectedPrestacionId, setSelectedPrestacionId] = useState(null);
+  // --- MODAL STATES ---
+  const [modalOpen, setModalOpen] = useState(false);
+  const [currentItem, setCurrentItem] = useState(null); // La prestación que estamos editando
+  
+  // Formulario dentro del modal
+  const [targetType, setTargetType] = useState("EVALUADOR"); // EVALUADOR | COMPANIA | TODOS
+  const [tipoPago, setTipoPago] = useState("MONTO"); // MONTO | PORCENTAJE
+  const [valor, setValor] = useState("");
+  
+  // Autocomplete Estado
+  const [evaluadorSearch, setEvaluadorSearch] = useState("");
+  const [evaluadorSugerencias, setEvaluadorSugerencias] = useState([]);
+  const [evaluadorSelected, setEvaluadorSelected] = useState(null); // {Id, Nombre}
+  const [activeTab, setActiveTab] = useState("AUDITORIA");
+  useEffect(() => {
+    loadMasterData();
+  }, []);
 
-  // Config guardada por prestación (en memoria)
-  const [configPorPrestacion, setConfigPorPrestacion] = useState({});
+  async function loadMasterData() {
+    setLoading(true);
+    try {
+      const res = await fetchMasterPrestaciones(); // <--- Nueva función API
+      if (res.ok) setData(res.data);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }
 
-  // Estado del formulario de configuración
-  const selectedConfig = configPorPrestacion[selectedPrestacionId] || {
-    aplicaA: "MEDICO", // MEDICO | PROVEEDOR
-    sujeto: "",
-    tipoCosto: "MONTO", // MONTO | PORCENTAJE
-    valor: "",
-    actualizado: null,
-  };
+  // --- LOGICA AUTOCOMPLETE ---
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(async () => {
+      if (evaluadorSearch.length > 2 && !evaluadorSelected) {
+        const results = await searchEvaluadores(evaluadorSearch);
+        setEvaluadorSugerencias(results);
+      } else {
+        setEvaluadorSugerencias([]);
+      }
+    }, 300);
+    return () => clearTimeout(delayDebounceFn);
+  }, [evaluadorSearch, evaluadorSelected]);
 
-  const [formConfig, setFormConfig] = useState(selectedConfig);
+  function selectSugerencia(sug) {
+    setEvaluadorSelected(sug);
+    setEvaluadorSearch(sug.Nombre);
+    setEvaluadorSugerencias([]);
+  }
 
-  // Cada vez que cambie de prestación seleccionada, sincronizamos el form
-  React.useEffect(() => {
-    const cfg = configPorPrestacion[selectedPrestacionId] || {
-      aplicaA: "MEDICO",
-      sujeto: "",
-      tipoCosto: "MONTO",
-      valor: "",
-      actualizado: null,
-    };
-    setFormConfig(cfg);
-  }, [selectedPrestacionId, configPorPrestacion]);
+  function clearEvaluadorSelection() {
+    setEvaluadorSelected(null);
+    setEvaluadorSearch("");
+  }
 
-  const prestacionesFiltradas = useMemo(() => {
-    const q = buscarPrestacion.trim().toLowerCase();
-    if (!q) return prestaciones;
-    return prestaciones.filter((p) =>
-      p.descripcion.toLowerCase().includes(q)
-    );
-  }, [prestaciones, buscarPrestacion]);
-
-  const selectedPrestacion = prestaciones.find(
-    (p) => p.id === selectedPrestacionId
-  );
-
-  const handleGuardarConfig = (e) => {
-    e.preventDefault();
-    if (!selectedPrestacion) {
-      alert("Primero selecciona una prestación de la lista.");
-      return;
+  // --- MODAL HANDLERS ---
+  function openEditModal(item) {
+    setCurrentItem(item);
+    // Reset form
+    setTargetType("EVALUADOR");
+    setTipoPago("MONTO");
+    setValor("");
+    clearEvaluadorSelection();
+    setModalOpen(true);
+  }
+  function recalculateItemDisplay(item) {
+    const configs = item.configs || [];
+    if (configs.length === 0) {
+      return { ...item, asignadoA: "Sin asignar", tipoPago: "-", valor: 0 };
     }
-    if (!formConfig.sujeto) {
-      alert("Indica el médico o proveedor al que aplica.");
-      return;
+    if (configs.length === 1) {
+      return { 
+        ...item, 
+        asignadoA: configs[0].quien, 
+        tipoPago: configs[0].tipoPago, 
+        valor: configs[0].valor 
+      };
     }
-    if (!formConfig.valor || Number(formConfig.valor) <= 0) {
-      alert("Ingresa un valor mayor a 0.");
-      return;
-    }
+    // Si hay más de 1 regla
+    return { ...item, asignadoA: "Múltiples Reglas", tipoPago: "Varios", valor: 0 };
+  }
+  // --- NUEVO GUARDAR (INSTANTÁNEO) ---
+  async function handleSaveConfig() {
+    if (!valor) return alert("Ingrese un valor");
+    if (targetType === "EVALUADOR" && !evaluadorSelected) return alert("Seleccione un evaluador de la lista");
 
-    const actualizado = todayISO();
+    const quienNombre = targetType === "EVALUADOR" ? evaluadorSelected.Nombre : "Tarifa Base";
 
-    setConfigPorPrestacion((prev) => ({
-      ...prev,
-      [selectedPrestacionId]: {
-        ...formConfig,
-        valor: Number(formConfig.valor),
-        actualizado,
-      },
-    }));
-
-    alert(
-      `Configuración guardada para "${selectedPrestacion.descripcion}". (Por ahora solo en memoria del navegador)`
-    );
-  };
-
-  // ---------- Paquetes (mock local) ----------
-  const [paquetes, setPaquetes] = useState([]);
-  const [paqNombre, setPaqNombre] = useState("");
-  const [paqPrecio, setPaqPrecio] = useState("");
-  const [paqPrestacionesIds, setPaqPrestacionesIds] = useState([]);
-
-  const handleAgregarPrestacionAlPaquete = (p) => {
-    if (!p) return;
-    setPaqPrestacionesIds((prev) =>
-      prev.includes(p.id) ? prev : [...prev, p.id]
-    );
-  };
-
-  const prestacionesEnPaquete = useMemo(
-    () =>
-      paqPrestacionesIds
-        .map((id) => prestaciones.find((p) => p.id === id))
-        .filter(Boolean),
-    [paqPrestacionesIds, prestaciones]
-  );
-
-  const handleQuitarPrestacionDelPaquete = (id) => {
-    setPaqPrestacionesIds((prev) => prev.filter((x) => x !== id));
-  };
-
-  const handleGuardarPaquete = (e) => {
-    e.preventDefault();
-    if (!paqNombre.trim()) {
-      alert("Ingresa un nombre de paquete.");
-      return;
-    }
-    if (!paqPrecio || Number(paqPrecio) <= 0) {
-      alert("Ingresa un precio de paquete mayor a 0.");
-      return;
-    }
-    if (paqPrestacionesIds.length === 0) {
-      alert("Agrega al menos una prestación al paquete.");
-      return;
-    }
-
-    const nuevo = {
-      id: `PAQ-${Date.now()}`,
-      nombre: paqNombre.trim(),
-      precio: Number(paqPrecio),
-      prestacionesIds: [...paqPrestacionesIds],
-      creado: todayISO(),
+    const payload = {
+      descripcion: currentItem.descripcion,
+      evaluadorNombre: targetType === "EVALUADOR" ? evaluadorSelected.Nombre : null,
+      companiaNombre: null, 
+      tipoPago,
+      valor: Number(valor)
     };
 
-    setPaquetes((prev) => [...prev, nuevo]);
+    // 1. Guardar en BD (Rápido)
+    const res = await createTarifa(payload);
+    
+    if (res.ok) {
+      const newId = res.id; // El ID que nos devolvió el backend modificado
 
-    // reset form
-    setPaqNombre("");
-    setPaqPrecio("");
-    setPaqPrestacionesIds([]);
+      // 2. ACTUALIZAR ESTADO LOCALMENTE (¡Sin recargar!)
+      setData(prevData => {
+        return prevData.map(item => {
+          if (item.descripcion === currentItem.descripcion) {
+            // Creamos la nueva regla en memoria
+            const newConfig = {
+              id: newId,
+              quien: quienNombre,
+              tipoPago,
+              valor: Number(valor)
+            };
+            
+            // Agregamos a sus configs
+            const updatedConfigs = [...item.configs, newConfig];
+            const updatedItem = { ...item, configs: updatedConfigs };
+            
+            // Actualizamos lo que se ve en la tabla principal y en el modal actual
+            const finalItem = recalculateItemDisplay(updatedItem);
+            setCurrentItem(finalItem); // Actualiza el modal abierto
+            return finalItem;          // Actualiza la tabla de fondo
+          }
+          return item;
+        });
+      });
 
-    alert(
-      "Paquete guardado (simulado). Más adelante se persistirá en base de datos."
-    );
-  };
+      // Limpiar formulario para seguir agregando si se desea
+      setValor("");
+      // setModalOpen(false); // Opcional: Si quieres que se cierre al guardar, descomenta esto.
+      
+    } else {
+      alert("Error al guardar");
+    }
+  }
 
-  // Para el buscador de prestación en la sección de paquetes
-  const [buscarPrestacionPaquete, setBuscarPrestacionPaquete] = useState("");
-  const prestacionesSugeridasPaquete = useMemo(() => {
-    const q = buscarPrestacionPaquete.trim().toLowerCase();
-    if (!q) return [];
-    return prestaciones
-      .filter((p) => p.descripcion.toLowerCase().includes(q))
-      .slice(0, 8);
-  }, [prestaciones, buscarPrestacionPaquete]);
+  // --- NUEVO BORRAR (INSTANTÁNEO) ---
+  async function handleDeleteConfig(id) {
+    if(!confirm("¿Borrar esta regla?")) return;
+
+    // 1. Borrar en BD
+    await deleteTarifa(id);
+
+    // 2. ACTUALIZAR ESTADO LOCALMENTE
+    setData(prevData => {
+      return prevData.map(item => {
+        if (item.descripcion === currentItem.descripcion) {
+          // Filtramos la regla borrada
+          const updatedConfigs = item.configs.filter(c => c.id !== id);
+          const updatedItem = { ...item, configs: updatedConfigs };
+          
+          // Recalculamos visuales
+          const finalItem = recalculateItemDisplay(updatedItem);
+          setCurrentItem(finalItem); // Actualiza el modal abierto
+          return finalItem;          // Actualiza la tabla de fondo
+        }
+        return item;
+      });
+    });
+  }
+  // --- FILTRADO TABLA PRINCIPAL ---
+  const filteredData = data.filter(d => 
+    d.descripcion.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <div className="module-page">
       
-
-      {/* Tabs simples */}
-      <div className="section-card" style={{ paddingBottom: 12 }}>
-        <div style={{ display: "flex", gap: 8 }}>
+      {/* 1. BARRA DE PESTAÑAS (NUEVO) */}
+      <div style={{ marginBottom: '20px', borderBottom: '1px solid #e5e7eb' }}>
+        <div style={{ display: 'flex', gap: '20px' }}>
           <button
-            type="button"
-            className="btn-primary"
+            onClick={() => setActiveTab("AUDITORIA")}
             style={{
-              background: tab === "costos" ? "#2563eb" : "#e5e7eb",
-              color: tab === "costos" ? "#ffffff" : "#111827",
-              boxShadow: tab === "costos" ? undefined : "none",
+              padding: '10px 20px',
+              borderBottom: activeTab === "AUDITORIA" ? '3px solid #2563EB' : '3px solid transparent',
+              color: activeTab === "AUDITORIA" ? '#2563EB' : '#6B7280',
+              fontWeight: '600',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '15px'
             }}
-            onClick={() => setTab("costos")}
           >
-            Configuración de costos
+            ⚙️ Costos Auditoría
           </button>
           <button
-            type="button"
-            className="btn-primary"
+            onClick={() => setActiveTab("GENERAL")}
             style={{
-              background: tab === "paquetes" ? "#2563eb" : "#e5e7eb",
-              color: tab === "paquetes" ? "#ffffff" : "#111827",
-              boxShadow: tab === "paquetes" ? undefined : "none",
+              padding: '10px 20px',
+              borderBottom: activeTab === "GENERAL" ? '3px solid #2563EB' : '3px solid transparent',
+              color: activeTab === "GENERAL" ? '#2563EB' : '#6B7280',
+              fontWeight: '600',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '15px'
             }}
-            onClick={() => setTab("paquetes")}
           >
-            Paquetes
+            📋 Maestro de Prestaciones
           </button>
         </div>
       </div>
 
-      {/* CONTENIDO SEGÚN TAB */}
-      {tab === "costos" ? (
-        <section className="section-card">
-          <div className="section-header-row">
-            <div>
-              <h2 className="section-title">Configuración por prestación</h2>
-              <p className="section-subtitle">
-                Busca una prestación, selecciona si aplica a un médico o
-                proveedor, indica el tipo de cálculo (monto / porcentaje) y
-                guarda. Esta configuración luego se utilizará en el módulo de
-                Honorarios Médicos.
-              </p>
-            </div>
-          </div>
+      {/* 2. CONTENIDO: COSTOS AUDITORÍA */}
+      {activeTab === "AUDITORIA" && (
+        <div style={{ marginTop: '20px' }}>
+           <ConfigCostosAuditoria />
+        </div>
+      )}
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(0, 380px) minmax(0, 1fr)",
-              gap: 24,
-              marginTop: 4,
-            }}
-          >
-            {/* Columna izquierda: buscador + lista */}
-            <div>
-              <div className="form-field">
-                <label className="form-label" htmlFor="buscar-prest">
-                  Buscar prestación
-                </label>
-                <input
-                  id="buscar-prest"
-                  className="form-input"
-                  placeholder="Escribe al menos 2 caracteres..."
-                  value={buscarPrestacion}
-                  onChange={(e) => setBuscarPrestacion(e.target.value)}
+      {/* 3. CONTENIDO: MAESTRO DE PRESTACIONES (TU CÓDIGO ORIGINAL) */}
+      {activeTab === "GENERAL" && (
+        <>
+          <div className="section-card section-card-wide">
+            <h3 className="section-title">Maestro de Prestaciones</h3>
+            <p className="section-subtitle">Configura los pagos para cada procedimiento.</p>
+
+            {/* BUSCADOR */}
+            <div style={{ marginBottom: '25px', marginTop: '10px' }}>
+              <div style={{ position: 'relative', maxWidth: '350px' }}>
+                <input 
+                  className="form-input" 
+                  placeholder="Buscar prestación..." 
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  style={{ 
+                    paddingLeft: '15px', 
+                    width: '100%',
+                    boxShadow: '0 2px 5px rgba(0,0,0,0.05)'
+                  }}
                 />
               </div>
+            </div>
 
-              <div className="table-wrapper" style={{ marginTop: 12 }}>
-                <table className="simple-table">
-                  <thead>
-                    <tr>
-                      <th>Código</th>
-                      <th>Descripción</th>
-                      <th></th>
+            {/* TABLA RESUMEN */}
+            <div className="table-wrapper" style={{ maxHeight: '60vh', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
+              <table className="simple-table">
+                <thead>
+                  <tr>
+                    <th>Descripción de Prestación</th>
+                    <th>Pagar A</th>
+                    <th>Tipo Pago</th>
+                    <th>Valor</th>
+                    <th width="80">Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr><td colSpan={5} className="text-center p-4">Cargando maestro...</td></tr>
+                  ) : filteredData.slice(0, 100).map((item, idx) => ( 
+                    <tr key={idx}>
+                      <td>{item.descripcion}</td>
+                      <td>{item.asignadoA}</td>
+                      <td>{item.tipoPago === 'PORCENTAJE' ? '%' : item.tipoPago === 'MONTO' ? 'S/.' : '-'}</td>
+                      <td>{item.valor > 0 ? item.valor : '-'}</td>
+                      <td>
+                        <button className="btn-primary btn-sm" onClick={() => openEditModal(item)}>
+                          Editar
+                        </button>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {prestacionesFiltradas.length === 0 ? (
-                      <tr>
-                        <td colSpan={3} className="table-empty">
-                          No hay prestaciones que coincidan con la búsqueda.
-                        </td>
-                      </tr>
-                    ) : (
-                      prestacionesFiltradas.map((p) => (
-                        <tr key={p.id}>
-                          <td>{p.codigo}</td>
-                          <td>{p.descripcion}</td>
-                          <td style={{ textAlign: "right" }}>
-                            <button
-                              type="button"
-                              className="btn-primary"
-                              style={{
-                                padding: "0.25rem 0.8rem",
-                                fontSize: "0.8rem",
-                                boxShadow: "none",
-                              }}
-                              onClick={() => setSelectedPrestacionId(p.id)}
-                            >
-                              Configurar
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
+              <small className="text-gray-400">Mostrando primeros 100 de {filteredData.length}</small>
             </div>
+          </div>
 
-            {/* Columna derecha: formulario de configuración */}
-            <div>
-              <h3
-                style={{
-                  marginTop: 0,
-                  marginBottom: 8,
-                  fontSize: "1.05rem",
-                }}
+          {/* --- MODAL FLOTANTE (TU CÓDIGO ORIGINAL) --- */}
+          {modalOpen && currentItem && (
+            <div className="modal-overlay" onClick={() => setModalOpen(false)}>
+              <div 
+                className="modal-content" 
+                onClick={e => e.stopPropagation()} 
+                style={{ maxWidth: '700px', padding: '30px', borderRadius: '12px', boxShadow: '0 20px 50px rgba(0,0,0,0.1)' }}
               >
-                Detalle de configuración
-              </h3>
-              {selectedPrestacion ? (
-                <>
-                  <p
-                    style={{
-                      margin: 0,
-                      marginBottom: 12,
-                      fontSize: "0.9rem",
-                    }}
+                {/* 1. ENCABEZADO */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '25px', borderBottom: '1px solid #f0f0f0', paddingBottom: '15px' }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '20px', color: '#111827', fontWeight: '700' }}>Editar Prestación</h3>
+                    <p style={{ margin: '5px 0 0', color: '#6B7280', fontSize: '14px' }}>
+                      {currentItem.descripcion}
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => setModalOpen(false)} 
+                    style={{ background: 'transparent', border: 'none', fontSize: '24px', cursor: 'pointer', color: '#9CA3AF', lineHeight: 1 }}
                   >
-                    <strong>Prestación: </strong>
-                    {selectedPrestacion.descripcion}
-                    <br />
-                    <span style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-                      Código: {selectedPrestacion.codigo}
-                    </span>
-                    {selectedConfig.actualizado && (
-                      <>
-                        <br />
-                        <span
-                          style={{
-                            color: "#059669",
-                            fontSize: "0.8rem",
-                          }}
-                        >
-                          Última actualización: {selectedConfig.actualizado}
-                        </span>
-                      </>
-                    )}
-                  </p>
-
-                  <form
-                    onSubmit={handleGuardarConfig}
-                    className="form-grid"
-                    style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
-                  >
-                    <div className="form-field">
-                      <label className="form-label">Aplica a</label>
-                      <select
-                        className="form-select"
-                        value={formConfig.aplicaA}
-                        onChange={(e) =>
-                          setFormConfig((prev) => ({
-                            ...prev,
-                            aplicaA: e.target.value,
-                            sujeto: "",
-                          }))
-                        }
-                      >
-                        <option value="MEDICO">Médico</option>
-                        <option value="PROVEEDOR">Proveedor</option>
-                      </select>
-                    </div>
-
-                    <div className="form-field">
-                      <label className="form-label">
-                        {formConfig.aplicaA === "MEDICO"
-                          ? "Médico (evaluador)"
-                          : "Proveedor (compañía médica)"}
-                      </label>
-                      <input
-                        className="form-input"
-                        placeholder={
-                          formConfig.aplicaA === "MEDICO"
-                            ? "Escribe el nombre del médico..."
-                            : "Escribe el nombre del proveedor..."
-                        }
-                        value={formConfig.sujeto || ""}
-                        onChange={(e) =>
-                          setFormConfig((prev) => ({
-                            ...prev,
-                            sujeto: e.target.value,
-                          }))
-                        }
-                      />
-                      <small style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                        Más adelante este campo se conectará con los nombres
-                        reales de CBMEDIC (excluyendo ANGLOLAB para médicos).
-                      </small>
-                    </div>
-
-                    <div className="form-field">
-                      <label className="form-label">Tipo de costo</label>
-                      <select
-                        className="form-select"
-                        value={formConfig.tipoCosto}
-                        onChange={(e) =>
-                          setFormConfig((prev) => ({
-                            ...prev,
-                            tipoCosto: e.target.value,
-                          }))
-                        }
-                      >
-                        <option value="MONTO">Monto fijo</option>
-                        <option value="PORCENTAJE">
-                          Porcentaje sobre precio base
-                        </option>
-                      </select>
-                    </div>
-
-                    <div className="form-field">
-                      <label className="form-label">
-                        {formConfig.tipoCosto === "MONTO"
-                          ? "Monto"
-                          : "Porcentaje (%)"}
-                      </label>
-                      <input
-                        className="form-input"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={formConfig.valor}
-                        onChange={(e) =>
-                          setFormConfig((prev) => ({
-                            ...prev,
-                            valor: e.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-
-                    <div className="mt-3" style={{ gridColumn: "1 / span 2" }}>
-                      <button type="submit" className="btn-primary">
-                        Guardar configuración
-                      </button>
-                    </div>
-                  </form>
-                </>
-              ) : (
-                <p
-                  style={{
-                    fontSize: "0.9rem",
-                    color: "#6b7280",
-                    marginTop: 4,
-                  }}
-                >
-                  Selecciona una prestación de la lista de la izquierda para
-                  configurar su costo.
-                </p>
-              )}
-            </div>
-          </div>
-        </section>
-      ) : (
-        // ==================== TAB PAQUETES ====================
-        <section className="section-card">
-          <div className="section-header-row">
-            <div>
-              <h2 className="section-title">Paquetes de prestaciones</h2>
-              <p className="section-subtitle">
-                Define paquetes de prestaciones con un precio cerrado. Si un
-                paciente completa todas las prestaciones del paquete, el monto
-                se prorrateará; si no, se usarán los costos individuales
-                configurados.
-              </p>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(0, 420px) minmax(0, 1fr)",
-              gap: 24,
-              marginTop: 4,
-            }}
-          >
-            {/* Columna izquierda: formulario de paquete */}
-            <div>
-              <form onSubmit={handleGuardarPaquete}>
-                <div className="form-field">
-                  <label className="form-label" htmlFor="paq-nombre">
-                    Nombre del paquete
-                  </label>
-                  <input
-                    id="paq-nombre"
-                    className="form-input"
-                    placeholder="Ej. Lipídico 1"
-                    value={paqNombre}
-                    onChange={(e) => setPaqNombre(e.target.value)}
-                  />
+                    &times;
+                  </button>
                 </div>
-
-                <div className="form-field">
-                  <label className="form-label" htmlFor="paq-precio">
-                    Precio del paquete
-                  </label>
-                  <input
-                    id="paq-precio"
-                    className="form-input"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={paqPrecio}
-                    onChange={(e) => setPaqPrecio(e.target.value)}
-                  />
-                </div>
-
-                <div className="form-field">
-                  <label
-                    className="form-label"
-                    htmlFor="buscar-prest-paquete"
-                  >
-                    Buscar y agregar prestaciones
-                  </label>
-                  <input
-                    id="buscar-prest-paquete"
-                    className="form-input"
-                    placeholder="Escribe para buscar prestaciones..."
-                    value={buscarPrestacionPaquete}
-                    onChange={(e) =>
-                      setBuscarPrestacionPaquete(e.target.value)
-                    }
-                  />
-                  {prestacionesSugeridasPaquete.length > 0 && (
-                    <div
-                      className="table-wrapper"
-                      style={{
-                        marginTop: 8,
-                        maxHeight: 180,
-                      }}
-                    >
-                      <table className="simple-table">
+                
+                {/* 2. REGLAS EXISTENTES (TABLA) */}
+                <div style={{ marginBottom: '30px' }}>
+                  <h5 style={{ fontSize: '13px', textTransform: 'uppercase', color: '#6B7280', letterSpacing: '0.05em', marginBottom: '10px', fontWeight: '600' }}>
+                    Reglas Configuradas
+                  </h5>
+                  
+                  {currentItem.configs.length > 0 ? (
+                    <div style={{ border: '1px solid #E5E7EB', borderRadius: '8px', overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                        <thead style={{ background: '#F9FAFB', color: '#374151' }}>
+                          <tr>
+                            <th style={{ padding: '10px 15px', textAlign: 'left', fontWeight: '600' }}>Asociado a</th>
+                            <th style={{ padding: '10px 15px', textAlign: 'left', fontWeight: '600' }}>Tipo</th>
+                            <th style={{ padding: '10px 15px', textAlign: 'left', fontWeight: '600' }}>Valor</th>
+                            <th style={{ padding: '10px 15px', textAlign: 'right' }}></th>
+                          </tr>
+                        </thead>
                         <tbody>
-                          {prestacionesSugeridasPaquete.map((p) => (
-                            <tr key={p.id}>
-                              <td>{p.codigo}</td>
-                              <td>{p.descripcion}</td>
-                              <td style={{ textAlign: "right" }}>
-                                <button
-                                  type="button"
-                                  className="btn-primary"
-                                  style={{
-                                    padding: "0.25rem 0.7rem",
-                                    fontSize: "0.75rem",
-                                    boxShadow: "none",
-                                  }}
-                                  onClick={() =>
-                                    handleAgregarPrestacionAlPaquete(p)
-                                  }
-                                >
-                                  Agregar
-                                </button>
-                              </td>
-                            </tr>
+                          {currentItem.configs.map((c, idx) => (
+                             <tr key={c.id} style={{ borderTop: idx > 0 ? '1px solid #E5E7EB' : 'none' }}>
+                               <td style={{ padding: '10px 15px', color: '#111827' }}>{c.quien}</td>
+                               <td style={{ padding: '10px 15px', color: '#4B5563' }}>{c.tipoPago}</td>
+                               <td style={{ padding: '10px 15px', fontWeight: '600', color: c.tipoPago === 'PORCENTAJE' ? '#2563EB' : '#059669' }}>
+                                 {c.tipoPago === 'PORCENTAJE' ? `${c.valor}%` : `S/. ${Number(c.valor).toFixed(2)}`}
+                               </td>
+                               <td style={{ padding: '10px 15px', textAlign: 'right' }}>
+                                 <button 
+                                   onClick={() => handleDeleteConfig(c.id)}
+                                   style={{ color: '#EF4444', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
+                                 >
+                                   Eliminar
+                                 </button>
+                               </td>
+                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
+                  ) : (
+                    <div style={{ padding: '15px', background: '#FFFBEB', color: '#B45309', borderRadius: '6px', fontSize: '14px', border: '1px solid #FCD34D' }}>
+                      ⚠️ No hay reglas específicas. El valor actual es <b>0</b>.
+                    </div>
                   )}
                 </div>
+                
+                {/* 3. FORMULARIO NUEVA REGLA */}
+                <div style={{ background: '#F9FAFB', padding: '20px', borderRadius: '8px', border: '1px solid #E5E7EB' }}>
+                  <h5 style={{ marginTop: 0, marginBottom: '15px', fontSize: '15px', fontWeight: '700', color: '#1F2937' }}>
+                    + Agregar Nueva Regla
+                  </h5>
 
-                <div style={{ marginTop: 16 }}>
-                  <h4 style={{ margin: 0, marginBottom: 8, fontSize: "0.95rem" }}>
-                    Prestaciones del paquete
-                  </h4>
-                  <div className="table-wrapper">
-                    <table className="simple-table">
-                      <thead>
-                        <tr>
-                          <th>Código</th>
-                          <th>Descripción</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {prestacionesEnPaquete.length === 0 ? (
-                          <tr>
-                            <td colSpan={3} className="table-empty">
-                              Aún no hay prestaciones en este paquete.
-                            </td>
-                          </tr>
-                        ) : (
-                          prestacionesEnPaquete.map((p) => (
-                            <tr key={p.id}>
-                              <td>{p.codigo}</td>
-                              <td>{p.descripcion}</td>
-                              <td style={{ textAlign: "right" }}>
-                                <button
-                                  type="button"
-                                  className="btn-primary"
-                                  style={{
-                                    padding: "0.25rem 0.7rem",
-                                    fontSize: "0.75rem",
-                                    boxShadow: "none",
-                                    background: "#ef4444",
-                                  }}
-                                  onClick={() =>
-                                    handleQuitarPrestacionDelPaquete(p.id)
-                                  }
-                                >
-                                  Quitar
-                                </button>
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '25px' }}>
+                     
+                     {/* COLUMNA IZQUIERDA: ASIGNACIÓN */}
+                     <div>
+                       <label className="form-label" style={{ marginBottom: '8px' }}>Asociar esta tarifa a:</label>
+                       <select 
+                          className="form-select" 
+                          value={targetType} 
+                          onChange={e => setTargetType(e.target.value)}
+                          style={{ marginBottom: '15px', width: '100%' }}
+                       >
+                         <option value="EVALUADOR">Un Evaluador Específico</option>
+                         <option value="TODOS">Tarifa Base (Para todos)</option>
+                       </select>
+
+                       {targetType === "EVALUADOR" && (
+                         <div style={{ position: 'relative' }}>
+                           <label className="form-label" style={{ marginBottom: '8px' }}>Buscar Evaluador:</label>
+                           <input 
+                             className="form-input"
+                             placeholder="Escribe mín. 3 letras..."
+                             value={evaluadorSearch}
+                             onChange={e => {
+                               setEvaluadorSearch(e.target.value);
+                               setEvaluadorSelected(null);
+                             }}
+                             style={{ 
+                               width: '100%', 
+                               borderColor: evaluadorSelected ? '#10B981' : '#D1D5DB',
+                               backgroundColor: evaluadorSelected ? '#ECFDF5' : '#FFF'
+                             }}
+                           />
+                           
+                           {/* LISTA FLOTANTE SUGERENCIAS */}
+                           {evaluadorSugerencias.length > 0 && (
+                             <div style={{
+                               position: 'absolute',
+                               top: '100%', left: 0, right: 0,
+                               backgroundColor: 'white',
+                               border: '1px solid #E5E7EB',
+                               borderRadius: '0 0 8px 8px',
+                               boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                               zIndex: 9999,
+                               maxHeight: '180px',
+                               overflowY: 'auto',
+                               marginTop: '2px'
+                             }}>
+                               {evaluadorSugerencias.map((sug, i) => (
+                                 <div 
+                                   key={sug.Id || i}
+                                   onClick={() => selectSugerencia(sug)}
+                                   style={{ 
+                                     padding: '10px 12px', 
+                                     cursor: 'pointer', 
+                                     borderBottom: '1px solid #F3F4F6', 
+                                     fontSize: '14px',
+                                     color: '#374151',
+                                     transition: 'background 0.2s'
+                                   }}
+                                   onMouseEnter={e => e.currentTarget.style.background = '#F3F4F6'}
+                                   onMouseLeave={e => e.currentTarget.style.background = 'white'}
+                                 >
+                                   {sug.Nombre}
+                                 </div>
+                               ))}
+                             </div>
+                           )}
+                           {!evaluadorSelected && evaluadorSearch.length > 2 && evaluadorSugerencias.length === 0 && (
+                              <div style={{position:'absolute', top:'100%', left:0, fontSize:'12px', color:'#EF4444', marginTop:'4px'}}>
+                                Sin resultados...
+                              </div>
+                           )}
+                         </div>
+                       )}
+                     </div>
+
+                     {/* COLUMNA DERECHA: VALOR */}
+                     <div>
+                        <label className="form-label" style={{ marginBottom: '8px' }}>Tipo de Pago:</label>
+                        <div style={{ display: 'flex', gap: '15px', marginBottom: '15px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', cursor: 'pointer' }}>
+                            <input type="radio" checked={tipoPago === "MONTO"} onChange={() => setTipoPago("MONTO")} style={{ accentColor: '#2563EB' }} />
+                            Monto (S/.)
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', cursor: 'pointer' }}>
+                            <input type="radio" checked={tipoPago === "PORCENTAJE"} onChange={() => setTipoPago("PORCENTAJE")} style={{ accentColor: '#2563EB' }} />
+                            Porcentaje (%)
+                          </label>
+                        </div>
+                        
+                        <label className="form-label" style={{ marginBottom: '8px' }}>
+                            {tipoPago === "MONTO" ? "Importe en Soles:" : "Porcentaje a pagar:"}
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
+                          <span style={{ position: 'absolute', left: '12px', color: '#6B7280', fontWeight: 'bold' }}>
+                              {tipoPago === "MONTO" ? "S/." : "%"}
+                          </span>
+                          <input 
+                              type="number" 
+                              className="form-input" 
+                              style={{ paddingLeft: '40px', fontWeight: 'bold', fontSize: '16px', color: '#111827' }}
+                              value={valor} 
+                              onChange={e => setValor(e.target.value)}
+                              placeholder="0.00"
+                          />
+                        </div>
+                     </div>
                   </div>
                 </div>
 
-                <div className="mt-3">
-                  <button type="submit" className="btn-primary">
-                    Guardar paquete
+                {/* 4. FOOTER BOTONES */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '15px', marginTop: '30px' }}>
+                  <button 
+                    className="btn-secondary" 
+                    onClick={() => setModalOpen(false)}
+                    style={{ padding: '10px 20px' }}
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    className="btn-primary" 
+                    onClick={handleSaveConfig}
+                    style={{ padding: '10px 24px', boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.2)' }}
+                  >
+                    Guardar Regla
                   </button>
                 </div>
-              </form>
-            </div>
-
-            {/* Columna derecha: lista de paquetes ya configurados */}
-            <div>
-              <h3
-                style={{
-                  marginTop: 0,
-                  marginBottom: 8,
-                  fontSize: "1.05rem",
-                }}
-              >
-                Paquetes configurados (solo en memoria)
-              </h3>
-              <p
-                style={{
-                  marginTop: 0,
-                  marginBottom: 10,
-                  fontSize: "0.85rem",
-                  color: "#6b7280",
-                }}
-              >
-                Aquí se muestran los paquetes que has creado durante esta
-                sesión. Más adelante se guardarán en base de datos y podrán ser
-                usados por el módulo de HHMM.
-              </p>
-              <div className="table-wrapper">
-                <table className="simple-table">
-                  <thead>
-                    <tr>
-                      <th>Nombre</th>
-                      <th>Precio</th>
-                      <th># Prestaciones</th>
-                      <th>Creado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paquetes.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="table-empty">
-                          Aún no has creado paquetes.
-                        </td>
-                      </tr>
-                    ) : (
-                      paquetes.map((paq) => (
-                        <tr key={paq.id}>
-                          <td>{paq.nombre}</td>
-                          <td>
-                            {paq.precio.toLocaleString("es-PE", {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </td>
-                          <td>{paq.prestacionesIds.length}</td>
-                          <td>{paq.creado}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
               </div>
             </div>
-          </div>
-        </section>
+          )}
+        </>
       )}
     </div>
   );

@@ -6,7 +6,13 @@ const mainConfig = {
   user: process.env.SQL_USER,
   password: process.env.SQL_PASSWORD,
   server: process.env.SQL_SERVER,      // 10.33.10.230
-  database: process.env.SQL_DATABASE,  // FacturacionCBMedic
+  
+  // 🔴 ANTES (Posible causa del error si el .env dice 'cbmedic'):
+  // database: process.env.SQL_DATABASE, 
+  
+  // 🟢 AHORA (Forzamos la conexión a la BD correcta):
+  database: 'FacturacionCBMedic', 
+
   options: {
     encrypt: false,
     trustServerCertificate: true,
@@ -18,15 +24,18 @@ const mainConfig = {
 
 // --- Config BD cbmedic (productiva) ---
 const cbmedicConfig = {
+  // Si tus credenciales son las mismas, puedes dejarlo así, o usar las específicas
   user: process.env.SQL_CBMEDIC_USER || process.env.SQL_USER,
   password: process.env.SQL_CBMEDIC_PASSWORD || process.env.SQL_PASSWORD,
-  server: process.env.SQL_CBMEDIC_SERVER,
-  database: process.env.SQL_CBMEDIC_DATABASE,
+  server: process.env.SQL_CBMEDIC_SERVER || process.env.SQL_SERVER,
+  
+  // Esta SÍ debe apuntar a cbmedic (datos clínicos)
+  database: 'cbmedic', // O process.env.SQL_CBMEDIC_DATABASE si prefieres
+
   options: {
     encrypt: false,
     trustServerCertificate: true,
   },
-  // aquí estaba el problema: subimos el timeout de la consulta
   requestTimeout: 300000,      // 5 minutos
   connectionTimeout: 30000,
 };
@@ -34,11 +43,11 @@ const cbmedicConfig = {
 let mainPoolPromise = null;
 let cbmedicPoolPromise = null;
 
-/** Conexión a FacturacionCBMedic */
+/** Conexión a FacturacionCBMedic (Administrativa) */
 export function getPool() {
   if (!mainPoolPromise) {
     console.log(
-      "🔌 Conectando a BD principal:",
+      "🔌 Conectando a BD principal (Facturacion):",
       mainConfig.server,
       mainConfig.database
     );
@@ -47,11 +56,11 @@ export function getPool() {
   return mainPoolPromise;
 }
 
-/** Conexión a cbmedic */
+/** Conexión a cbmedic (Clínica) */
 export async function getPoolCbmedic() {
   if (!cbmedicPoolPromise) {
     console.log(
-      "🔌 Conectando a BD CBMEDIC:",
+      "🔌 Conectando a BD CBMEDIC (Clínica):",
       cbmedicConfig.server,
       cbmedicConfig.database
     );

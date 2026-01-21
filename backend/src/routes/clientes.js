@@ -2,67 +2,32 @@
 import { Router } from "express";
 import { getPoolCbmedic, getPool, sql } from "../util/db.js";
 import ExcelJS from "exceljs";
-import crypto from "crypto"
+import crypto from "crypto";
 const router = Router();
 
 /**
  * Helper: mapea el sufijo del Nro (_3, _8, _10, _11) a nombre de sede.
  */
 function mapTipoEvaluacion(raw) {
-  if (!raw) return "PRE OCUPACIONAL"; // valor por defecto
-
-  // Pasamos a mayúsculas y quitamos tildes
-  const t = raw
-    .toUpperCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-
-  // 1) PERIODICO
-  if (t.includes("PERIOD")) {
-    // EJ: "EVALUACION MEDICA PERIODICA"
-    return "PERIODICO";
-  }
-
-  // 2) POST OCUPACIONAL
-  if (t.includes("POST") || t.includes("RETIRO")) {
-    // EJ: "EVAL. MEDICA POST OCUPACIONAL", "EVALUACION RETIRO"
-    return "POST OCUPACIONAL";
-  }
-
-  // 3) PRE OCUPACIONAL
-  if (t.includes("OCUPAC") || t.includes("INGRESO") || t.includes("PRE")) {
-    // EJ: "EVALUACION MEDICA OCUPACIONAL", "EVAL. INGRESO"
-    return "PRE OCUPACIONAL";
-  }
-
-  // Si no entra en nada, igual lo mandamos a uno de los 3 (por defecto)
+  if (!raw) return "PRE OCUPACIONAL"; 
+  const t = raw.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (t.includes("PERIOD")) return "PERIODICO";
+  if (t.includes("POST") || t.includes("RETIRO")) return "POST OCUPACIONAL";
+  if (t.includes("OCUPAC") || t.includes("INGRESO") || t.includes("PRE")) return "PRE OCUPACIONAL";
   return "PRE OCUPACIONAL";
 }
 function mapSedeFromNro(nroRaw) {
   if (!nroRaw) return { sedeCodigo: null, sedeNombre: null };
-
   const parts = String(nroRaw).split("_");
   const sedeCodigo = parts.length > 1 ? parts[1] : null;
-
   let sedeNombre = null;
   switch (sedeCodigo) {
-    case "3":
-      sedeNombre = "EMO - MEGA PLAZA";
-      break;
-    case "8":
-      sedeNombre = "IN HOUSE OCUPACIONAL";
-      break;
-    case "10":
-      sedeNombre = "EMO - GUARDIA";
-      break;
-    case "11":
-      sedeNombre = "INTEGRAMEDICA (MEGA PLAZA)";
-      break;
-    default:
-      // otras sedes no se usan en filtros / resumen
-      sedeNombre = null;
+    case "3": sedeNombre = "EMO - MEGA PLAZA"; break;
+    case "8": sedeNombre = "IN HOUSE OCUPACIONAL"; break;
+    case "10": sedeNombre = "EMO - GUARDIA"; break;
+    case "11": sedeNombre = "INTEGRAMEDICA (MEGA PLAZA)"; break;
+    default: sedeNombre = null;
   }
-
   return { sedeCodigo, sedeNombre };
 }
 
@@ -78,1449 +43,572 @@ function mapSedeFromNro(nroRaw) {
  *  - detailsByGroupId: detalle fila a fila
  *  - filters: listas para combos de cliente/tipo/sede
  */
-router.get("/process", async (req, res) => {
-  try {
-    const { from, to, condicionPago } = req.query;
 
-    if (!from || !to) {
-      return res.status(400).json({
-        ok: false,
-        message: "Debe indicar fecha desde (from) y hasta (to).",
-      });
-    }
-
-    const poolCb = await getPoolCbmedic();
-    const poolFact = await getPool(); // FacturacionCBMedic
-
-    // =======================
-    // 1) EJECUTAR SP PRINCIPAL (cbmedic)
-    // =======================
-    const result = await poolCb
-      .request()
-      .input("FechaDesde", sql.Date, from)
-      .input("FechaHasta", sql.Date, to)
-      .input("CondicionPago", sql.VarChar(20), condicionPago || "TODAS")
-      .query(`
-        EXEC dbo.pa_liq_clientes_rango_export
-          @FechaDesde,
-          @FechaHasta,
-          @CondicionPago
-      `);
-
-    const rows = result.recordset || [];
-
-    // 2) LEER PENDIENTES (NO LIQUIDAR) DE ESTE PERIODO y también arrastrados
-const pendResult = await poolFact
-  .request()
-  .input("DesdeActual", sql.Date, from)
-  .input("HastaActual", sql.Date, to)
-  .query(`
-    SELECT 
-      Nro,
-      Documento,
-      Paciente,
-      Cliente,
-      UnidadProduccion,
-      TipoEvaluacion,
-      Sede,
-      FechaInicio,
-      Importe,
-      CondicionPago,
-      Desde,
-      Hasta,
-      Estado
-    FROM dbo.LiquidacionClientesPendientes
-  WHERE Estado IN ('PENDIENTE', 'REACTIVADO')
-      AND (
-           (Desde = @DesdeActual AND Hasta = @HastaActual) -- mismo período
-        OR (Hasta < @DesdeActual)                          -- períodos anteriores completamente
-      )
-  `);
-
-const pendRows = pendResult.recordset || [];
-
-// 🔒 SOLO se consideran "NO liquidar" los PENDIENTE del PERIODO ACTUAL
-const pendientesSet = new Set(
-  pendRows
-    .filter((p) => {
-      const estado = (p.Estado || "").toUpperCase();
-      if (estado !== "PENDIENTE") return false;
-
-      // comparamos fechas del registro con el rango actual
-      if (!p.Desde || !p.Hasta) return false;
-
-      const desdeStr = new Date(p.Desde).toISOString().slice(0, 10);
-      const hastaStr = new Date(p.Hasta).toISOString().slice(0, 10);
-
-      return desdeStr === from && hastaStr === to;
-    })
-    .map((p) => {
-      const nro = (p.Nro || "").trim();
-      const doc = (p.Documento || "").trim();
-      return `${nro}||${doc}`;
-    })
-);
-
-// lista completa de pendientes (PENDIENTE + REACTIVADO) — por si luego quieres usarlos
-const pendientesExtra = pendRows;
-    // ======================================
-    // 3) EPISODIOS YA LIQUIDADOS (todas las liquidaciones VIGENTES)
-    // ======================================
-    const episodiosLiquidados = await poolFact.request().query(`
-      SELECT d.Nro, d.Documento
-      FROM dbo.LiquidacionClientesDet d
-      INNER JOIN dbo.LiquidacionClientesCab c
-        ON d.IdLiquidacion = c.IdLiquidacion
-      WHERE c.Estado IS NULL OR c.Estado = 'VIGENTE'
-    `);
-
-    const liquidadosSet = new Set(
-      (episodiosLiquidados.recordset || []).map((r) => {
-        const nro = (r.Nro || "").trim();
-        const doc = (r.Documento || "").trim();
-        return `${nro}||${doc}`;
-      })
-    );
-  
-    // ======================================
-    // 4) CÓDIGOS DE LIQUIDACIÓN POR GRUPO (para mostrar LQ-xxxxx)
-    // ======================================
-    const codigosPorGrupo = new Map();
-    const codigosResult = await poolFact
-    .request()
-    .input("Desde", sql.Date, from)
-    .input("Hasta", sql.Date, to)
-    .query(`
-      SELECT 
-        c.Codigo,
-        d.Cliente,
-        d.UnidadProduccion,
-        d.TipoEvaluacion,
-        d.Sede
-      FROM dbo.LiquidacionClientesDet d
-      INNER JOIN dbo.LiquidacionClientesCab c
-        ON d.IdLiquidacion = c.IdLiquidacion
-      WHERE (c.Estado IS NULL OR c.Estado = 'VIGENTE')
-        AND c.Desde = @Desde
-        AND c.Hasta = @Hasta
-    `);
-
-    (codigosResult.recordset || []).forEach((r) => {
-      const tipoNorm = mapTipoEvaluacion(r.TipoEvaluacion || "");
-      const key =
-        (r.Cliente || "").trim().toUpperCase() +
-        "||" +
-        (r.UnidadProduccion || "").trim().toUpperCase() +
-        "||" +
-        (tipoNorm || "").trim().toUpperCase() +
-        "||" +
-        (r.Sede || "").trim().toUpperCase();
-
-      if (!codigosPorGrupo.has(key)) {
-        codigosPorGrupo.set(key, r.Codigo);
-      }
-    });
-
-    // =======================
-    // 5) FILTRO CONDICIÓN PAGO (por seguridad)
-    // =======================
-    let filtered = rows;
-    if (condicionPago && condicionPago !== "TODAS") {
-      const condUp = condicionPago.toString().trim().toUpperCase();
-      filtered = rows.filter((r) => {
-        const val = (
-          r["Condición de Pago"] ||
-          r["Condicion de Pago"] ||
-          ""
-        )
-          .toString()
-          .trim()
-          .toUpperCase();
-        return val === condUp;
-      });
-    }
-
-    if (!filtered.length) {
-      return res.json({
-        ok: true,
-        groups: [],
-        detailsByGroupId: {},
-        filters: {
-          clientes: [],
-          tipos: [],
-          sedes: [],
-        },
-      });
-    }
-  
-   // ===========================
-// 6) NORMALIZAR DETALLES
-// ===========================
-const details = [];
-
-// 6.a) Primero procesamos las filas del SP
-for (const r of filtered) {
-  const { sedeCodigo, sedeNombre } = r["Sede"]
-    ? { sedeCodigo: null, sedeNombre: r["Sede"] }
-    : mapSedeFromNro(r.Nro);
-
-  const nro = (r.Nro || "").trim();
-  const doc = (r["Documento"] || r["N° Documento"] || "").trim();
-  const key = `${nro}||${doc}`;
-
-  const cliente = r["Cliente"] || r["RAZÓN SOCIAL"] || "";
-  const unidadProduccion = r["Unidad de Producción"] || "";
-  const tipoEvalNorm = mapTipoEvaluacion(
-    r["Tipo de Evaluación"] || r["Tipo de Examen"] || ""
-  );
-  const precioCb = Number(r["Importe"] || r["Precio CB"] || 0);
-
-  // flags de estado
-  const isPendiente = pendientesSet.has(key);
-  const estaLiquidado = liquidadosSet.has(key);
-
-  details.push({
-    nro,
-    fechaInicio: r["Fecha Inicio"] || null,
-
-    cliente,
-    rucCliente: r["RUC DEL CLIENTE"] || null,
-    unidadProduccion,
-    tipoEvaluacion: tipoEvalNorm,
-
-    condicionPago: r["Condición de Pago"] || r["Condicion de Pago"] || "",
-
-    tipoDocumento: r["Tipo de Documento"] || "",
-    documento: doc,
-    paciente: r["Paciente"] || "",
-    evaluador: r["Evaluador"] || "",
-
-    precioCb,
-    estadoPrestacion: r["Estado de la Prestación"] || "",
-
-    sedeCodigo,
-    sedeNombre,
-
-    isPendiente,
-    estaLiquidado,
-    origenPendiente: false,
-  });
-}  // ← AQUÍ CIERRA EL PRIMER FOR
-
-// 6.b) Añadir también las filas PENDIENTES (de cualquier periodo)
-for (const p of pendientesExtra) {
-  const nro = (p.Nro || "").trim();
-  const doc = (p.Documento || "").trim();
-  const key = `${nro}||${doc}`;
-
-  // Si ya vino en el detalle normal del SP, no lo duplicamos
-  const yaExiste = details.some(
-    (d) => `${d.nro || ""}||${d.documento || ""}` === key
-  );
-  if (yaExiste) continue;
-
-  // Si se está filtrando por condición de pago, respetarlo también aquí
-  if (condicionPago && condicionPago !== "TODAS") {
-    const condPend = (p.CondicionPago || "").toString().trim().toUpperCase();
-    const condFiltro = condicionPago.toString().trim().toUpperCase();
-    if (condPend !== condFiltro) continue;
-  }
-
-  const sedeNombre = p.Sede || "";
-  const sedeCodigo = null;
-
-  const cliente = p.Cliente || "";
-  const unidadProduccion = p.UnidadProduccion || "";
-  const tipoEvalNorm = mapTipoEvaluacion(p.TipoEvaluacion || "");
-  const importeNum = Number(p.Importe ?? 0);
-  const estadoPend = (p.Estado || "").toUpperCase();
-
-  // 🔍 Determinar si es del MISMO periodo o arrastrado
-  let esMismoPeriodo = false;
-  if (p.Desde && p.Hasta) {
-    const desdeStr = new Date(p.Desde).toISOString().slice(0, 10);
-    const hastaStr = new Date(p.Hasta).toISOString().slice(0, 10);
-    esMismoPeriodo = desdeStr === from && hastaStr === to;
-  }
-
-  // 👉 Regla:
-  // - Si es MISMO periodo y Estado = PENDIENTE → sigue siendo "no liquidar" en este rango
-  // - Si es de periodos anteriores (arrastrado) → se considera disponible para liquidar,
-  //   pero marcamos origenPendiente = true para poder resaltarlo.
-  const esPendienteMismoPeriodo =
-    esMismoPeriodo && estadoPend === "PENDIENTE";
-
-  const esArrastradoPendiente =
-    !esMismoPeriodo && (estadoPend === "PENDIENTE" || estadoPend === "REACTIVADO");
-
-  // 👉 Fallback de fecha: primero FechaInicio, luego Desde, luego Hasta
-  const fechaInicioPend = p.FechaInicio || p.Desde || p.Hasta || null;
-
-  details.push({
-    nro,
-    fechaInicio: fechaInicioPend,
-
-    cliente,
-    rucCliente: null,
-    unidadProduccion,
-    tipoEvaluacion: tipoEvalNorm,
-
-    condicionPago: p.CondicionPago || "",
-
-    tipoDocumento: "",
-    documento: doc,
-    paciente: p.Paciente || "",
-    evaluador: "",
-
-    precioCb: importeNum,
-    estadoPrestacion: "PENDIENTE",
-
-    sedeCodigo,
-    sedeNombre,
-
-    // 🔔 Sólo se bloquea en el MISMO periodo
-    isPendiente: esPendienteMismoPeriodo,
-    estaLiquidado: false,
-
-    // 🔔 Si viene de periodos anteriores lo marcamos como "origenPendiente"
-    //     pero se puede liquidar directamente
-    origenPendiente: esArrastradoPendiente,
-  });
-}
-  // ===========================
-// 7) AGRUPAR RESUMEN
-// ===========================
-const groupMap = new Map();
-
-for (const row of details) {
-  const keyGrupo =
-    (row.cliente || "") +
-    "||" +
-    (row.unidadProduccion || "") +
-    "||" +
-    (row.tipoEvaluacion || "") +
-    "||" +
-    (row.sedeNombre || "");
-
-  let grp = groupMap.get(keyGrupo);
-  if (!grp) {
-    // dentro del if (!grp) { ... }
-  grp = {
-    id: keyGrupo,
-    cliente: row.cliente,
-    unidadProduccion: row.unidadProduccion,
-    tipoEvaluacion: row.tipoEvaluacion,
-    sedeNombre: row.sedeNombre,
-    fechaInicioMin: row.fechaInicio,
-
-    // 👉 separa importes
-    importeTotal: 0,        // suma de TODAS las filas
-    importeDisponible: 0,   // filas que se pueden liquidar
-    importeLiquidado: 0,    // NUEVO: filas ya liquidadas
-    importePendiente: 0,    // NUEVO: filas marcadas PENDIENTE
-    importe: 0,             // el que se envía al front
-
-    rows: [],
-    firmaStatus: "SIN_FIRMA",
-
-    // estado
-    estadoLiquidado: "NO",
-    codigo: null,
-
-    // flags internos
-    tienePendientes: false,
-    tieneLiquidados: false,
-    tieneDisponibles: false,
-    esSoloPendiente: false,
-    esGrupoPendiente: false,
-  };
-    groupMap.set(keyGrupo, grp);
-  }
-
-  // marcar flags de estado a nivel grupo
-  if (row.isPendiente) grp.tienePendientes = true;
-  if (row.estaLiquidado) grp.tieneLiquidados = true;
-
-  const esDisponible = !row.isPendiente && !row.estaLiquidado;
-  if (esDisponible) grp.tieneDisponibles = true;
-
-  // Siempre guardamos la fila en rows (para detalle y export)
-  grp.rows.push(row);
-
-  const monto = Number(row.precioCb || 0);
-
-  // 💰 Siempre sumamos al TOTAL del grupo
-  grp.importeTotal += monto;
-
-  // 💰 Solo sumamos a "disponible" si no está pendiente ni liquidado
-  if (!row.isPendiente && !row.estaLiquidado) {
-    grp.importeDisponible += monto;
-  }
-  // 💰 nuevo: acumular importes por estado
-  if (row.estaLiquidado) {
-    grp.importeLiquidado += monto;
-  }
-  if (row.isPendiente) {
-    grp.importePendiente += monto;
-  }
-  // actualizar fecha mínima
-  if (
-    row.fechaInicio &&
-    (!grp.fechaInicioMin ||
-      new Date(row.fechaInicio) < new Date(grp.fechaInicioMin))
-  ) {
-    grp.fechaInicioMin = row.fechaInicio;
-  }
-}
-
-// marcar si proviene de pendientes (cualquier fila con origenPendiente)
-for (const grp of groupMap.values()) {
-  grp.esGrupoPendiente = grp.rows.some((r) => r.origenPendiente);
-}
-// ============================
-// 8) CALCULAR FIRMA STATUS
-// ============================
-for (const [, grp] of groupMap.entries()) {
-  const allSin = grp.rows.length > 0 && grp.rows.every(
-    (r) => !r.evaluador || r.evaluador.toUpperCase() === "SIN FIRMA"
-  );
-  const allCon = grp.rows.length > 0 && grp.rows.every(
-    (r) => r.evaluador && r.evaluador.toUpperCase() !== "SIN FIRMA"
-  );
-
-  if (allSin) grp.firmaStatus = "SIN_FIRMA";
-  else if (allCon) grp.firmaStatus = "CON_FIRMA";
-  else grp.firmaStatus = "MIXTO";
-}
-
-// ======================================================
-// 9) MARCAR ESTADO: NO / PARCIAL / LIQUIDADO + CÓDIGO
-// ======================================================
-for (const grp of groupMap.values()) {
-  // 1) Estado general del grupo
-  if (grp.tieneLiquidados) {
-    if (grp.tienePendientes || grp.tieneDisponibles) {
-      grp.estadoLiquidado = "PARCIAL";
-    } else {
-      grp.estadoLiquidado = "LIQUIDADO";
-    }
-  } else {
-    grp.estadoLiquidado = "NO";
-  }
-    // 🔑 Elegimos qué importe mostrar al front:
-if (grp.estadoLiquidado === "LIQUIDADO") {
-  // todo liquidado → mostrar todo
-  grp.importe = grp.importeTotal;
-} else if (grp.estadoLiquidado === "PARCIAL") {
-  // parcial → mostrar lo YA LIQUIDADO
-  grp.importe = grp.importeLiquidado;
-} else {
-  // estado "NO" → mostrar solo lo disponible
-  grp.importe = grp.importeDisponible;
-}
-
-  // 5) Código de liquidación (si existe)
-  if (typeof codigosPorGrupo !== "undefined") {
-    const keyNorm =
-      (grp.cliente || "").trim().toUpperCase() +
-      "||" +
-      (grp.unidadProduccion || "").trim().toUpperCase() +
-      "||" +
-      (grp.tipoEvaluacion || "").trim().toUpperCase() +
-      (grp.sedeNombre || "").trim().toUpperCase();
-
-    grp.codigo = codigosPorGrupo.get(keyNorm) || null;
-  }
-}
-  
-    // ===========================
-    // 10) PREPARAR RESPUESTA FINAL
-    // ===========================
-    const groups = [];
-    const detailsByGroupId = {};
-
-    for (const [key, grp] of groupMap.entries()) {
-      const { rows: grpRows, totalFilas, totalLiquidadas, ...summary } = grp;
-      groups.push(summary);
-      detailsByGroupId[key] = grpRows;
-    }
-
-    groups.sort((a, b) => {
-    // 1) Por cliente
-    const c = (a.cliente || "").localeCompare(b.cliente || "");
-    if (c !== 0) return c;
-
-    // 2) Por fecha mínima
-    const ta = a.fechaInicioMin ? new Date(a.fechaInicioMin).getTime() : 0;
-    const tb = b.fechaInicioMin ? new Date(b.fechaInicioMin).getTime() : 0;
-
-    if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
-    if (Number.isNaN(ta)) return 1;
-    if (Number.isNaN(tb)) return -1;
-
-    return ta - tb;
-  });
-    const clientesSet = new Set();
-    const tiposSet = new Set();
-    const sedesSet = new Set();
-    const estadosPrestacionSet = new Set();
-
-    for (const d of details) {
-      if (d.cliente) clientesSet.add(d.cliente);
-      if (d.tipoEvaluacion) tiposSet.add(d.tipoEvaluacion);
-      if (d.sedeNombre) sedesSet.add(d.sedeNombre);
-      if (d.estadoPrestacion) estadosPrestacionSet.add(d.estadoPrestacion);
-    }
-
-    return res.json({
-      ok: true,
-      groups,
-      detailsByGroupId,
-      filters: {
-        clientes: Array.from(clientesSet).sort(),
-        tipos: Array.from(tiposSet).sort(),
-        sedes: Array.from(sedesSet).sort(),
-        estadosPrestacion: Array.from(estadosPrestacionSet).sort(),
-      },
-    });
-  } catch (err) {
-    console.error("Error en GET /api/clientes/process:", err);
-    return res.status(500).json({
-      ok: false,
-      message: "Error al procesar liquidación de clientes.",
-      debug: err.message,
-    });
-  }
-});
-/**
- * POST /api/clientes/exclusions
- * Guarda pacientes marcados como "no liquidar".
- * Body: { items: [{ nro, documento, paciente, fechaInicio, cliente, unidadProduccion, tipoEvaluacion, createdBy }] }
- */
-// Guarda pacientes marcados como "NO liquidar" en LiquidacionClientesPendientes
+// ===============================
+//  POST /api/clientes/exclusions (CORREGIDO: SECUENCIAL + TRANSACCIÓN SEGURA)
+// ===============================
 router.post("/exclusions", async (req, res) => {
   try {
     const { from, to, condicionPago, items } = req.body;
 
     if (!Array.isArray(items) || !items.length) {
-      return res.status(400).json({
-        ok: false,
-        message: "No hay elementos para excluir.",
-      });
+      return res.status(400).json({ ok: false, message: "Sin items." });
     }
 
-    if (!from || !to) {
-      return res.status(400).json({
-        ok: false,
-        message: "Faltan fechas desde/hasta para registrar pendientes.",
-      });
-    }
-
-    const pool = await getPool(); // FacturacionCBMedic
-
-    for (const it of items) {
-      const nro = (it.nro || "").trim();
-      const documento = (it.documento || "").trim();
-      const paciente = it.paciente || "";
-      const cliente = it.cliente || "";
-      const unidadProduccion = it.unidadProduccion || "";
-      const tipoEvaluacion = it.tipoEvaluacion || "";
-      const sede = it.sedeNombre || it.sede || "";
-      const fechaInicio = it.fechaInicio || null;
-      const importe = Number(it.precioCb ?? it.importe ?? 0);
-      const usuario = it.createdBy || "";
-      const exclude = !!it.exclude;
-
-      if (!nro) continue; // seguridad mínima
-
-      if (exclude) {
-        // 👉 Marcar / mantener como PENDIENTE en este período
-        await pool
-  .request()
-  .input("Desde", sql.Date, from)
-  .input("Hasta", sql.Date, to)
-  .input("CondicionPago", sql.NVarChar, condicionPago || "TODAS")
-  .input("Nro", sql.NVarChar, nro)
-  .input("Documento", sql.NVarChar, documento)
-  .input("Paciente", sql.NVarChar, paciente)
-  .input("Cliente", sql.NVarChar, cliente)
-  .input("UnidadProduccion", sql.NVarChar, unidadProduccion)
-  .input("TipoEvaluacion", sql.NVarChar, tipoEvaluacion)
-  .input("Sede", sql.NVarChar, sede)
-  .input("FechaInicio", sql.Date, fechaInicio)     // 👈 NUEVO
-  .input("Importe", sql.Decimal(18, 2), importe)
-  .input("Usuario", sql.NVarChar, usuario)
-  .query(`
-    IF EXISTS (
-      SELECT 1
-      FROM dbo.LiquidacionClientesPendientes
-      WHERE Nro = @Nro
-        AND ISNULL(Documento,'') = ISNULL(@Documento,'')
-        AND Desde = @Desde
-        AND Hasta = @Hasta
-        AND Estado = 'PENDIENTE'
-    )
-    BEGIN
-      SELECT 1;
-    END
-    ELSE
-    BEGIN
-      INSERT INTO dbo.LiquidacionClientesPendientes (
-        IdPendiente,
-        Desde,
-        Hasta,
-        CondicionPago,
-        Nro,
-        Documento,
-        Paciente,
-        Cliente,
-        UnidadProduccion,
-        TipoEvaluacion,
-        Sede,
-        FechaInicio,
-        Importe,
-        Usuario,
-        Motivo,
-        Estado,
-        CreatedAt,
-        UpdatedAt
-      )
-      VALUES (
-        NEWID(),
-        @Desde,
-        @Hasta,
-        @CondicionPago,
-        @Nro,
-        @Documento,
-        @Paciente,
-        @Cliente,
-        @UnidadProduccion,
-        @TipoEvaluacion,
-        @Sede,
-        @FechaInicio,   -- ✅ AHORA SI GUARDAMOS FECHA
-        @Importe,
-        @Usuario,
-        NULL,
-        'PENDIENTE',
-        SYSDATETIME(),
-        NULL
-      );
-    END
-  `);
-      } else {
-        // 👉 ANULAR el pendiente para este período (vuelve a ser candidato)
-        await pool
-          .request()
-          .input("Desde", sql.Date, from)
-          .input("Hasta", sql.Date, to)
-          .input("Nro", sql.NVarChar, nro)
-          .input("Documento", sql.NVarChar, documento)
-          .query(`
-            UPDATE dbo.LiquidacionClientesPendientes
-            SET Estado = 'REACTIVADO',
-                UpdatedAt = SYSDATETIME()
-            WHERE Nro = @Nro
-              AND ISNULL(Documento,'') = ISNULL(@Documento,'')
-              AND Desde = @Desde
-              AND Hasta = @Hasta
-              AND Estado = 'PENDIENTE';
-          `);
-      }
-    }
-
-    return res.json({
-      ok: true,
-      message: "Pendientes actualizados correctamente.",
-    });
-  } catch (err) {
-    console.error("Error en POST /api/clientes/exclusions:", err);
-    return res.status(500).json({
-      ok: false,
-      message: "Error al guardar exclusiones/pendientes.",
-      debug: err.message,
-    });
-  }
-});
-/**
- * POST /api/clientes/export
- * Body: { from, to, condicionPago, selectedIds }
- * Genera un Excel detallado por paciente/prestación para los grupos seleccionados.
- */
-router.post("/export", async (req, res) => {
-  try {
-    const { from, to, condicionPago, selectedIds, estadosPrestacion, } = req.body;
-    const estadosFiltro = Array.isArray(estadosPrestacion)
-    ? estadosPrestacion.filter((e) => e).map((e) => e.toString().trim().toUpperCase())
-    : [];
-    if (!from || !to) {
-      return res
-        .status(400)
-        .send("Debe indicar fecha desde y hasta para exportar.");
-    }
-    const idsSet = new Set(selectedIds || []);
-
-    const pool = await getPoolCbmedic();
-    const result = await pool
-      .request()
-      .input("FechaDesde", sql.Date, from)
-      .input("FechaHasta", sql.Date, to)
-      .input("CondicionPago", sql.VarChar(20), condicionPago || "TODAS")
-      .query(`
-        EXEC dbo.pa_liq_clientes_rango_export @FechaDesde, @FechaHasta, @CondicionPago
-      `);
-
-    const rows = result.recordset || [];
-
-    // 🔹 Cargar pendientes SOLO del periodo actual (para "NO liquidar")
-    const poolFact = await getPool();            // 👈 IMPORTANTE: aquí defines poolFact
-    const pendResult = await poolFact
-      .request()
-      .input("Desde", sql.Date, from)
-      .input("Hasta", sql.Date, to)
-      .query(`
-        SELECT Nro, Documento
-        FROM dbo.LiquidacionClientesPendientes
-        WHERE Estado = 'PENDIENTE'
-          AND Desde = @Desde
-          AND Hasta = @Hasta
-      `);
-
-    const pendRows = pendResult.recordset || [];
-
-    // 🔒 SOLO se consideran "NO liquidar" los PENDIENTE del PERIODO ACTUAL
-    const pendientesSet = new Set(
-      pendRows.map((p) => {
-        const nro = (p.Nro || "").trim();
-        const doc = (p.Documento || "").trim();
-        return `${nro}||${doc}`;
-      })
-    );
-
-    // 🔽 Aplicar "NO liquidar" + filtro de estado de prestación
-    const filteredRows = rows.filter((r) => {
-      const nro = (r.Nro || "").trim();
-      const doc = (r["Documento"] || r["N° Documento"] || "").trim();
-      const key = `${nro}||${doc}`;
-
-      // 1) Nunca exportar lo marcado como NO liquidar en este periodo
-      if (pendientesSet.has(key)) return false;
-
-      // 2) Respetar el filtro de estado de prestación si viene del front
-      if (estadosFiltro.length > 0) {
-        const estadoRow = (r["Estado de la Prestación"] || "")
-          .toString()
-          .trim()
-          .toUpperCase();
-
-        if (!estadosFiltro.includes(estadoRow)) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-
-    // 🧱 A partir de aquí sigues tal cual tenías:
-    // // 1) Construir detalles a partir del SP (rango actual)
-    const details = [];
-    for (const r of filteredRows) {
-      const { sedeCodigo, sedeNombre } = r["Sede"]
-        ? { sedeCodigo: null, sedeNombre: r["Sede"] }
-        : mapSedeFromNro(r.Nro);
-
-      details.push({
-        nro: r.Nro,
-        fechaInicio: r["Fecha Inicio"],
-        protocolo: r["Protocolo"],
-        cliente: r["Cliente"] || r["RAZÓN SOCIAL"],
-        rucCliente: r["RUC DEL CLIENTE"],
-        razonSocial: r["RAZÓN SOCIAL"] || r["Cliente"],
-        unidadProduccion: r["Unidad de Producción"],
-        tipoEvaluacion: mapTipoEvaluacion(
-          r["Tipo de Evaluación"] || r["Tipo de Examen"]
-        ),
-        condicionPago: r["Condición de Pago"] || r["Condicion de Pago"],
-        documento: r["Documento"] || r["N° Documento"],
-        paciente: r["Paciente"],
-        descripcionPrestacion: r["Descripción de la Prestación"],
-        importe: Number(r["Importe"] || r["Precio CB"] || 0),
-        sedeNombre,
-        estadoPrestacion: r["Estado de la Prestación"] || "",
-      });
-    }
-
-    // 👇 Y aquí ya sigue tu bloque de `pendExtraResult` que usa el MISMO poolFact
-    const pendExtraResult = await poolFact
-      .request()
-      .input("DesdeActual", sql.Date, from)
-      .input("HastaActual", sql.Date, to)
-      .query(`
-        SELECT 
-          Nro,
-          Documento,
-          Paciente,
-          Cliente,
-          UnidadProduccion,
-          TipoEvaluacion,
-          Sede,
-          FechaInicio,
-          Importe,
-          CondicionPago,
-          Desde,
-          Hasta,
-          Estado
-        FROM dbo.LiquidacionClientesPendientes
-        WHERE Estado IN ('PENDIENTE','REACTIVADO')
-          AND (
-               (Desde = @DesdeActual AND Hasta = @HastaActual) -- mismos días
-            OR (Hasta < @HastaActual)                          -- meses anteriores
-          )
-      `);
-
-const pendientesExtra = pendExtraResult.recordset || [];
-
-// fusionar como en /process
-for (const p of pendientesExtra) {
-  const nro = (p.Nro || "").trim();
-  const doc = (p.Documento || "").trim();
-  const key = `${nro}||${doc}`;
-
-  // evitar duplicación si ya vino en SP
-  const yaExiste = details.some(
-    (d) => `${d.nro || ""}||${d.documento || ""}` === key
-  );
-  if (yaExiste) continue;
-
-  // respetar condición de pago
-  if (condicionPago && condicionPago !== "TODAS") {
-    const condPend = (p.CondicionPago || "").toString().trim().toUpperCase();
-    const condFiltro = condicionPago.toString().trim().toUpperCase();
-    if (condPend !== condFiltro) continue;
-  }
-
-  // fecha original del paciente
-  const fechaInicioPend =
-    p.FechaInicio || p.Desde || p.Hasta || null;
-
-  details.push({
-  nro,
-  fechaInicio: fechaInicioPend,
-  protocolo: null,
-  cliente: p.Cliente || "",
-  rucCliente: null,
-  razonSocial: p.Cliente || "",
-  unidadProduccion: p.UnidadProduccion || "",
-  tipoEvaluacion: mapTipoEvaluacion(p.TipoEvaluacion || ""),
-  condicionPago: p.CondicionPago || "",
-  documento: doc,
-  paciente: p.Paciente || "",
-  descripcionPrestacion: "(Pendiente arrastrado)",
-  importe: Number(p.Importe ?? 0),
-  sedeNombre: p.Sede || "",
-  evaluador: "",
-  estadoPrestacion: "PENDIENTE",   // 👈 NUEVO: para que entre en el filtro por estado
-});
-}
-
-// =========================================================
-// 3) Validación final (ya incluye SP + pendientes extra)
-// =========================================================
-// =========================================================
-// 3) Filtro FINAL por Estado de la Prestación (a nivel fila)
-// =========================================================
-let finalDetails = details;
-
-if (estadosFiltro.length > 0) {
-  finalDetails = details.filter((d) => {
-    const est = (d.estadoPrestacion || "")
-      .toString()
-      .trim()
-      .toUpperCase();
-    return estadosFiltro.includes(est);
-  });
-}
-
-if (!finalDetails.length) {
-  return res.status(400).send("No hay datos para exportar.");
-}
-
-    // Agrupamos igual que en /process: Cliente + Unidad + Tipo + Sede
-      const groupMap = new Map();
-
-      for (const row of finalDetails) {
-      const key =
-        (row.cliente || "") +
-        "||" +
-        (row.unidadProduccion || "") +
-        "||" +
-        (row.tipoEvaluacion || "") +
-        "||" +
-        (row.sedeNombre || "");
-
-      let grp = groupMap.get(key);
-      if (!grp) {
-        grp = {
-          id: key,
-          cliente: row.cliente,
-          unidadProduccion: row.unidadProduccion,
-          tipoEvaluacion: row.tipoEvaluacion,
-          sedeNombre: row.sedeNombre,
-          fechaInicioMin: row.fechaInicio,
-          importe: 0,
-          rows: [],
-        };
-        groupMap.set(key, grp);
-      }
-
-      if (
-        row.fechaInicio &&
-        (!grp.fechaInicioMin ||
-          new Date(row.fechaInicio) < new Date(grp.fechaInicioMin))
-      ) {
-        grp.fechaInicioMin = row.fechaInicio;
-      }
-
-      grp.importe += row.importe || 0;
-      grp.rows.push(row);
-    }
-
-    // Filtrar solo los grupos seleccionados (ids = keys)
-    const selectedGroups = [];
-    for (const [key, grp] of groupMap.entries()) {
-      if (!idsSet.size || idsSet.has(key)) {
-        selectedGroups.push(grp);
-      }
-    }
-
-    if (!selectedGroups.length) {
-      return res
-        .status(400)
-        .send("No se encontró ningún grupo seleccionado para exportar.");
-    }
-
-    // Crear Excel
-    const workbook = new ExcelJS.Workbook();
-    const usedSheetNames = new Set();
-    selectedGroups.forEach((grp, index) => {
-            // Base: Cliente - Sede (si hay)
-      let baseName =
-        grp.cliente && grp.sedeNombre
-          ? `${grp.cliente} - ${grp.sedeNombre}`
-          : grp.cliente || `Grupo ${index + 1}`;
-
-      // Excel solo permite 31 chars
-      baseName = baseName.substring(0, 31);
-
-      // Asegurar nombre único
-      let sheetName = baseName;
-      let suffix = 2;
-      while (usedSheetNames.has(sheetName)) {
-        const suffixStr = ` (${suffix})`;
-        const maxLen = 31 - suffixStr.length;
-        sheetName = baseName.substring(0, maxLen) + suffixStr;
-        suffix++;
-      }
-      usedSheetNames.add(sheetName);
-
-      const ws = workbook.addWorksheet(sheetName || `Grupo${index + 1}`);
-
-      // Cabecera (todas las columnas pedidas)
-      const header = [
-        "Fecha inicio",
-        "Protocolo",
-        "Cliente",
-        "Tipo de evaluación",
-        "Documento",
-        "Paciente",
-        "Descripción prestación",
-        "Importe",
-        "Condición de pago",
-        "RUC del cliente",
-        "Razón social",
-        "Sede",
-        "Unidad de producción",
-        "Estado prestación",
-      ];
-      const headerRow = ws.addRow(header);
-
-      headerRow.font = { bold: true };
-      headerRow.alignment = { vertical: "middle", horizontal: "center" };
-      headerRow.eachCell((cell) => {
-        cell.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "FFE3F2FD" }, // azul claro
-        };
-        cell.border = {
-          top: { style: "thin" },
-          left: { style: "thin" },
-          bottom: { style: "thin" },
-          right: { style: "thin" },
-        };
-      });
-
-      // Filas de detalle (una por prestación/paciente)
-      grp.rows.forEach((r) => {
-        ws.addRow([
-          r.fechaInicio,
-          r.protocolo,
-          r.cliente,
-          r.tipoEvaluacion,
-          r.documento,
-          r.paciente,
-          r.descripcionPrestacion,
-          r.importe,
-          r.condicionPago,
-          r.rucCliente,
-          r.razonSocial,
-          r.sedeNombre,
-          r.unidadProduccion,
-          r.estadoPrestacion,
-        ]);
-      });
-
-      // Fila de total del grupo
-      const totalRow = ws.addRow([
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "TOTAL",
-        grp.importe,
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-      ]);
-      totalRow.font = { bold: true };
-      totalRow.getCell(7).alignment = { horizontal: "right" };
-
-      // Ajustar ancho de columnas
-      ws.columns.forEach((col) => {
-        let maxLength = 10;
-        col.eachCell({ includeEmpty: true }, (cell) => {
-          const value = cell.value ? cell.value.toString() : "";
-          maxLength = Math.max(maxLength, value.length + 2);
-        });
-        col.width = Math.min(maxLength, 45);
-      });
-    });
-
-    const buffer = await workbook.xlsx.writeBuffer();
-
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="liquidaciones_${from}_a_${to}.xlsx"`
-    );
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-
-    return res.send(Buffer.from(buffer));
-  } catch (err) {
-    console.error("Error en POST /api/clientes/export:", err);
-    return res.status(500).send("Error al generar Excel.");
-  }
-});
-// ===============================
-//  POST /api/clientes/liquidar (CORREGIDO)
-// ===============================
-router.post("/liquidar", async (req, res) => {
-  try {
-    const { from, to, condicionPago, selectedIds, usuario } = req.body;
-
-    if (!from || !to) {
-      return res.status(400).json({
-        ok: false,
-        message: "Debe indicar fecha desde y hasta para liquidar.",
-      });
-    }
-
-    const idsSet = new Set(selectedIds || []);
-
-    // 1) Traer detalle completo desde cbmedic (SP principal)
-    const poolCb = await getPoolCbmedic();
-    const result = await poolCb
-      .request()
-      .input("FechaDesde", sql.Date, from)
-      .input("FechaHasta", sql.Date, to)
-      .input("CondicionPago", sql.VarChar(20), condicionPago || "TODAS")
-      .query(`
-        EXEC dbo.pa_liq_clientes_rango_export
-          @FechaDesde,
-          @FechaHasta,
-          @CondicionPago
-      `);
-
-    const rawRows = result.recordset || [];
-
-    // 2) LEER PENDIENTES (Tanto del periodo actual como antiguos arrastrados)
-    const poolFact = await getPool(); 
-    const pendResult = await poolFact
-      .request()
-      .input("DesdeActual", sql.Date, from)
-      .input("HastaActual", sql.Date, to)
-      .query(`
-        SELECT 
-          Nro, Documento, Paciente, Cliente, UnidadProduccion, TipoEvaluacion, 
-          Sede, FechaInicio, Importe, CondicionPago, Desde, Hasta, Estado
-        FROM dbo.LiquidacionClientesPendientes
-        WHERE Estado IN ('PENDIENTE', 'REACTIVADO')
-          AND (
-               (Desde = @DesdeActual AND Hasta = @HastaActual) -- Exclusiones de ESTE mes
-            OR (Hasta < @HastaActual)                          -- Arrastrados meses anteriores
-          )
-      `);
-
-    const pendRows = pendResult.recordset || [];
-
-    // 🔴 CORRECCIÓN CLAVE 1: Set de Bloqueo
-    // Solo bloqueamos los que son PENDIENTES y coinciden EXACTAMENTE con las fechas from/to actuales.
-    // Usamos strings YYYY-MM-DD para evitar problemas de horas/timezones.
-    const pendientesSet = new Set();
-    
-    pendRows.forEach((p) => {
-      const estado = (p.Estado || "").toUpperCase();
-      
-      // Si ya fue reactivado, no se bloquea nunca
-      if (estado !== "PENDIENTE") return;
-
-      // Validar fechas estrictas para saber si pertenece a ESTE periodo de bloqueo
-      if (!p.Desde || !p.Hasta) return;
-      
-      const pDesde = new Date(p.Desde).toISOString().slice(0, 10);
-      const pHasta = new Date(p.Hasta).toISOString().slice(0, 10);
-
-      // Si las fechas coinciden con el filtro actual, es un "No Liquidar" de AHORA.
-      if (pDesde === from && pHasta === to) {
-        const nro = (p.Nro || "").trim();
-        const doc = (p.Documento || "").trim();
-        pendientesSet.add(`${nro}||${doc}`);
-      }
-    });
-
-    // 3) Filtrar las filas que vienen del SP (excluyendo los bloqueados)
-    const filtered = rawRows.filter((r) => {
-      const nro = (r.Nro || "").trim();
-      const doc = (r["Documento"] || r["N° Documento"] || "").trim();
-      const key = `${nro}||${doc}`;
-      return !pendientesSet.has(key);
-    });
-
-    if (!filtered.length && !pendRows.length) {
-      return res.status(400).json({
-        ok: false,
-        message: "No hay datos para liquidar en el rango indicado.",
-      });
-    }
-
-    // 4) Normalizar filas del SP
-    const details = [];
-    for (const r of filtered) {
-      const { sedeCodigo, sedeNombre } = r["Sede"]
-        ? { sedeCodigo: null, sedeNombre: r["Sede"] }
-        : mapSedeFromNro(r.Nro);
-
-      details.push({
-        nro: (r.Nro || "").trim(),
-        fechaInicio: r["Fecha Inicio"],
-        protocolo: r["Protocolo"],
-        cliente: r["Cliente"] || r["RAZÓN SOCIAL"],
-        rucCliente: r["RUC DEL CLIENTE"],
-        razonSocial: r["RAZÓN SOCIAL"] || r["Cliente"],
-        unidadProduccion: r["Unidad de Producción"],
-        tipoEvaluacion: mapTipoEvaluacion(r["Tipo de Evaluación"] || r["Tipo de Examen"]),
-        condicionPago: r["Condición de Pago"] || r["Condicion de Pago"] || "",
-        documento: (r["Documento"] || r["N° Documento"] || "").trim(),
-        paciente: r["Paciente"],
-        descripcionPrestacion: r["Descripción de la Prestación"],
-        evaluador: r["Evaluador"],
-        importe: Number(r["Importe"] || r["Precio CB"] || 0),
-        sedeCodigo,
-        sedeNombre,
-      });
-    }
-
-    // 4.b) Agregar PENDIENTES ARRASTRADOS (Corregido)
-    for (const p of pendRows) {
-      const nro = (p.Nro || "").trim();
-      const doc = (p.Documento || "").trim();
-      const key = `${nro}||${doc}`;
-
-      // Si está en el set de bloqueo (es exclusión de ESTE mes), saltar
-      if (pendientesSet.has(key)) continue;
-
-      // Evitar duplicado si ya vino por el SP normal
-      const yaExiste = details.some(
-        (d) => `${d.nro || ""}||${d.documento || ""}` === key
-      );
-      if (yaExiste) continue;
-
-      // 🔴 CORRECCIÓN CLAVE 2: Condición de Pago flexible
-      // Si el pendiente tiene CondicionPago NULL o vacía, lo dejamos pasar por seguridad
-      // para que no se pierda. Solo filtramos si AMBOS tienen valor y son diferentes.
-      if (condicionPago && condicionPago !== "TODAS") {
-        const condPend = (p.CondicionPago || "").toString().trim().toUpperCase();
-        const condFiltro = condicionPago.toString().trim().toUpperCase();
-        
-        // Solo saltamos si el pendiente TIENE dato y es diferente al filtro
-        if (condPend !== "" && condPend !== condFiltro) continue;
-      }
-
-      const tipoEvalNorm = mapTipoEvaluacion(p.TipoEvaluacion || "");
-      const cliente = p.Cliente || "";
-      const fechaInicioPend = p.FechaInicio || p.Desde || p.Hasta || null;
-      const sedeNombre = p.Sede || "";
-
-      details.push({
-        nro,
-        fechaInicio: fechaInicioPend,
-        protocolo: null,
-        cliente: cliente,
-        rucCliente: null,
-        razonSocial: cliente,
-        unidadProduccion: p.UnidadProduccion || "",
-        tipoEvaluacion: tipoEvalNorm,
-        condicionPago: p.CondicionPago || "", // Se guarda tal cual venga
-        documento: doc,
-        paciente: p.Paciente || "",
-        descripcionPrestacion: "(Pendiente arrastrado)",
-        evaluador: "",
-        importe: Number(p.Importe ?? 0),
-        sedeCodigo: null,
-        sedeNombre,
-      });
-    }
-
-    // 5) Agrupar
-    const groupMap = new Map();
-    for (const row of details) {
-      const key =
-        (row.cliente || "") +
-        "||" +
-        (row.unidadProduccion || "") +
-        "||" +
-        (row.tipoEvaluacion || "") +
-        "||" +
-        (row.sedeNombre || "");
-
-      let grp = groupMap.get(key);
-      if (!grp) {
-        grp = { id: key, rows: [] }; // simplificado para liquidar
-        groupMap.set(key, grp);
-      }
-      grp.rows.push(row);
-    }
-
-    // 6) Filtrar por SelectedIds
-    const rowsToLiquidate = [];
-    const groupKeysSelected = new Set();
-
-    for (const [key, grp] of groupMap.entries()) {
-      // Si no hay selección específica o la key está seleccionada
-      if (!idsSet.size || idsSet.has(key)) {
-        groupKeysSelected.add(key);
-        rowsToLiquidate.push(...grp.rows);
-      }
-    }
-
-    if (!rowsToLiquidate.length) {
-      return res.status(400).json({
-        ok: false,
-        message: "No se encontraron filas para los grupos seleccionados.",
-      });
-    }
-
-    // 7) Calcular totales
-    let subtotal = 0;
-    const pacientesUnique = new Set();
-    for (const r of rowsToLiquidate) {
-      subtotal += Number(r.importe || 0);
-      pacientesUnique.add(`${(r.nro || "").trim()}||${(r.documento || "").trim()}`);
-    }
-
-    const igv = subtotal * 0.18;
-    const total = subtotal + igv;
-    const grupos = groupKeysSelected.size;
-    const pacientes = pacientesUnique.size;
-
-    // 8) Generar código LQ-xxxxx
-    const codeResult = await poolFact.request().query(`
-      SELECT MAX(CAST(SUBSTRING(Codigo, 4, 10) AS INT)) AS lastNum
-      FROM dbo.LiquidacionClientesCab
-      WHERE Codigo LIKE 'LQ-%'
-    `);
-    const lastNum = codeResult.recordset?.[0]?.lastNum || 0;
-    const codigo = `LQ-${String(lastNum + 1).padStart(5, "0")}`;
-
-    // 9) Transacción e Insert
-    const tx = new sql.Transaction(poolFact);
+    const pool = await getPool(); 
+    const tx = new sql.Transaction(pool);
     await tx.begin();
 
     try {
-      const IdLiquidacion = crypto.randomUUID();
+      // Usamos un bucle for...of para asegurar que las peticiones 
+      // entren UNA POR UNA en la transacción y evitar bloqueos.
+      for (const it of items) {
+        const nro = (it.nro || "").trim();
+        // Si no hay número, saltamos
+        if (!nro) continue; 
 
-      // INSERT CABECERA
-      const reqCab = new sql.Request(tx);
-      await reqCab
-        .input("IdLiquidacion", sql.UniqueIdentifier, IdLiquidacion)
-        .input("Desde", sql.Date, from)
-        .input("Hasta", sql.Date, to)
-        .input("CondicionPago", sql.NVarChar, condicionPago || "TODAS")
-        .input("Usuario", sql.NVarChar, usuario || "")
-        .input("Subtotal", sql.Decimal(18, 2), subtotal)
-        .input("IGV", sql.Decimal(18, 2), igv)
-        .input("Total", sql.Decimal(18, 2), total)
-        .input("Grupos", sql.Int, grupos)
-        .input("Pacientes", sql.Int, pacientes)
-        .input("Codigo", sql.NVarChar, codigo)
-        .query(`
-          INSERT INTO dbo.LiquidacionClientesCab (
-            IdLiquidacion, FechaLiquidacion, Desde, Hasta, CondicionPago,
-            Usuario, Subtotal, IGV, Total, Grupos, Pacientes, Codigo, Estado
-          )
-          VALUES (
-            @IdLiquidacion, SYSDATETIME(), @Desde, @Hasta, @CondicionPago,
-            @Usuario, @Subtotal, @IGV, @Total, @Grupos, @Pacientes, @Codigo, 'VIGENTE'
-          )
-        `);
+        const documento = (it.documento || "").trim();
+        const exclude = !!it.exclude;
+        
+        // Creamos el Request atado a la transacción actual
+        const rq = new sql.Request(tx); 
+        
+        // Parámetros comunes
+        rq.input("Desde", sql.Date, from)
+          .input("Hasta", sql.Date, to)
+          .input("Nro", sql.NVarChar, nro)
+          .input("Documento", sql.NVarChar, documento);
 
-      // INSERT DETALLES
-      for (const r of rowsToLiquidate) {
-        const rq = new sql.Request(tx);
-        await rq
-          .input("IdLiquidacion", sql.UniqueIdentifier, IdLiquidacion)
-          .input("Nro", sql.NVarChar, r.nro || "")
-          .input("Documento", sql.NVarChar, r.documento || "")
-          .input("Paciente", sql.NVarChar, r.paciente || "")
-          .input("Cliente", sql.NVarChar, r.cliente || "")
-          .input("UnidadProduccion", sql.NVarChar, r.unidadProduccion || "")
-          .input("TipoEvaluacion", sql.NVarChar, r.tipoEvaluacion || "")
-          .input("Sede", sql.NVarChar, r.sedeNombre || "")
-          .input("Protocolo", sql.NVarChar, r.protocolo || "")
-          .input("FechaInicio", sql.Date, r.fechaInicio || null)
-          .input("DescripcionPrestacion", sql.NVarChar, r.descripcionPrestacion || "")
-          .input("Importe", sql.Decimal(18, 2), Number(r.importe || 0))
-          .input("CondicionPago", sql.NVarChar, r.condicionPago || "")
-          .input("RucCliente", sql.NVarChar, r.rucCliente || "")
-          .input("RazonSocial", sql.NVarChar, r.razonSocial || "")
-          .input("Evaluador", sql.NVarChar, r.evaluador || "")
-          .query(`
-            INSERT INTO dbo.LiquidacionClientesDet (
-              IdLiquidacion, Nro, Documento, Paciente, Cliente,
-              UnidadProduccion, TipoEvaluacion, Sede, Protocolo, FechaInicio,
-              DescripcionPrestacion, Importe, CondicionPago, RucCliente,
-              RazonSocial, Evaluador
-            )
-            VALUES (
-              @IdLiquidacion, @Nro, @Documento, @Paciente, @Cliente,
-              @UnidadProduccion, @TipoEvaluacion, @Sede, @Protocolo, @FechaInicio,
-              @DescripcionPrestacion, @Importe, @CondicionPago, @RucCliente,
-              @RazonSocial, @Evaluador
-            )
+        if (exclude) {
+          // -------------------------------------------------------
+          // CASO 1: MARCAR COMO "NO LIQUIDAR" (INSERT / PENDIENTE)
+          // -------------------------------------------------------
+          
+          // Validar fecha segura para evitar error
+          let fechaInicio = null;
+          if (it.fechaInicio) {
+             const d = new Date(it.fechaInicio);
+             if (!isNaN(d.getTime())) fechaInicio = d;
+          }
+          
+          await rq
+            .input("CondicionPago", sql.NVarChar, condicionPago || "TODAS")
+            .input("Paciente", sql.NVarChar, it.paciente || "")
+            .input("Cliente", sql.NVarChar, it.cliente || "")
+            .input("UnidadProduccion", sql.NVarChar, it.unidadProduccion || "")
+            .input("TipoEvaluacion", sql.NVarChar, it.tipoEvaluacion || "")
+            .input("Sede", sql.NVarChar, it.sedeNombre || "")
+            .input("FechaInicio", sql.Date, fechaInicio)
+            .input("Importe", sql.Decimal(18, 2), Number(it.importe || 0))
+            .input("Usuario", sql.NVarChar, it.createdBy || "")
+            .query(`
+              IF NOT EXISTS (
+                  SELECT 1 FROM dbo.LiquidacionClientesPendientes 
+                  WHERE Nro = @Nro 
+                    AND ISNULL(Documento,'') = ISNULL(@Documento,'') 
+                    AND Desde = @Desde 
+                    AND Hasta = @Hasta 
+                    AND Estado = 'PENDIENTE'
+              )
+              BEGIN
+                INSERT INTO dbo.LiquidacionClientesPendientes 
+                (
+                  IdPendiente, Desde, Hasta, CondicionPago, Nro, Documento, Paciente, Cliente, 
+                  UnidadProduccion, TipoEvaluacion, Sede, FechaInicio, Importe, Usuario, Estado, CreatedAt
+                )
+                VALUES 
+                (
+                  NEWID(), @Desde, @Hasta, @CondicionPago, @Nro, @Documento, @Paciente, @Cliente, 
+                  @UnidadProduccion, @TipoEvaluacion, @Sede, @FechaInicio, @Importe, @Usuario, 'PENDIENTE', SYSDATETIME()
+                )
+              END
+            `);
+        } else {
+          // -------------------------------------------------------
+          // CASO 2: REACTIVAR (QUITAR EXCLUSIÓN)
+          // -------------------------------------------------------
+          await rq.query(`
+            UPDATE dbo.LiquidacionClientesPendientes
+            SET Estado = 'REACTIVADO', 
+                UpdatedAt = SYSDATETIME()
+            WHERE Nro = @Nro 
+              AND ISNULL(Documento,'') = ISNULL(@Documento,'')
+              AND Desde = @Desde 
+              AND Hasta = @Hasta 
+              AND Estado = 'PENDIENTE'
           `);
-      }
+        }
+      } // Fin del bucle for
 
       await tx.commit();
 
-      return res.json({
-        ok: true,
-        message: "Liquidación registrada correctamente.",
-        idLiquidacion: IdLiquidacion,
-        codigo,
-        subtotal,
-        total,
-        grupos,
-        pacientes,
-      });
+      return res.json({ ok: true, message: "Pendientes actualizados." });
 
     } catch (errTx) {
-      if (!tx._aborted) await tx.rollback();
-      throw errTx; // Lanzar para que lo capture el catch general
+      // Si falla algo, el rollback funcionará porque no hay peticiones paralelas
+      if (!tx._aborted) {
+        await tx.rollback();
+      }
+      console.error("Error en transacción exclusions:", errTx);
+      return res.status(500).json({ ok: false, message: "Error al procesar transacción." });
     }
 
   } catch (err) {
-    console.error("Error general en /liquidar:", err);
-    return res.status(500).json({
-      ok: false,
-      message: "Error al procesar la liquidación.",
-      debug: err.message,
-    });
+    console.error("Error general exclusions:", err);
+    return res.status(500).json({ ok: false, message: "Error interno al guardar." });
   }
 });
 
-/** 
- * GET /api/clientes/liquidaciones
- * Lista cabeceras de liquidación de clientes (histórico).
- * Query opcional:
- *   from=YYYY-MM-DD  (filtra Desde >= from)
- *   to=YYYY-MM-DD    (filtra Hasta <= to)
- *   condicionPago=CONTADO|CREDITO|TODAS
- */
-router.get("/liquidaciones", async (req, res) => {
+// =====================================================================
+// POST /export (CORREGIDO: Una hoja por Cliente + Importes Exactos)
+// =====================================================================
+router.post("/export", async (req, res) => {
+  try {
+    // 1. Recibimos 'rows' directas del frontend (ya filtradas y calculadas)
+    // Si el frontend envía 'nros' (versión vieja), mantenemos compatibilidad o forzamos rows.
+    // Asumiremos que aplicaste el cambio del frontend y vienen 'rows'.
+    let { rows } = req.body;
+
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+        // Fallback: Si por alguna razón llegan nros, tendríamos que consultar BD, 
+        // pero para arreglar el monto exacto, es MEJOR obligar al frontend a mandar rows.
+        return res.status(400).send("No se recibieron datos para exportar.");
+    }
+
+    // 2. Agrupar por CLIENTE (Para que todo salga en una sola hoja)
+    const clientMap = new Map();
+
+    rows.forEach(r => {
+        // Clave de agrupación: Solo el Nombre del Cliente
+        const clienteName = (r.cliente || r.Cliente || "VARIOS").toUpperCase();
+        
+        if (!clientMap.has(clienteName)) {
+            clientMap.set(clienteName, {
+                name: clienteName,
+                rows: [],
+                totalImporte: 0
+            });
+        }
+        
+        const grp = clientMap.get(clienteName);
+        grp.rows.push(r);
+        grp.totalImporte += Number(r.importe || r.precioCb || r.PrecioCB || 0);
+    });
+
+    // 3. Generar Excel
+    const workbook = new ExcelJS.Workbook();
+    
+    // Iteramos por cada CLIENTE (una hoja por cliente)
+    for (const clientData of clientMap.values()) {
+        // Nombre de hoja seguro (max 31 chars)
+        let sheetName = clientData.name.replace(/[\\/?*[\]]/g, "").substring(0, 30);
+        // Evitar duplicados de nombre de hoja (raro si agrupamos por cliente, pero por seguridad)
+        let uniqueName = sheetName;
+        let counter = 1;
+        while (workbook.getWorksheet(uniqueName)) {
+            uniqueName = `${sheetName.substring(0,25)} ${counter++}`;
+        }
+
+        const ws = workbook.addWorksheet(uniqueName);
+
+        // Encabezados
+        const headerRow = ws.addRow([
+            "Fecha Inicio", 
+            "Protocolo", 
+            "Cliente", 
+            "Tipo Evaluación", 
+            "Sede",              // Agregamos Sede aquí ya que estarán mezcladas
+            "Unidad Producción", // Agregamos Unidad
+            "Documento", 
+            "Paciente", 
+            "Descripción Prestación", // Si tienes este dato
+            "Importe", 
+            "Condición Pago",
+            "Estado"
+        ]);
+
+        // Estilos Encabezado
+        headerRow.font = { bold: true, color: { argb: "FFFFFF" } };
+        headerRow.eachCell(cell => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "203764" } };
+            cell.alignment = { horizontal: "center" };
+        });
+        const formatFechaUTC = (dateStr) => {
+            if (!dateStr) return "-";
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return "-";
+            // Usamos getUTC para evitar que reste 5 horas y cambie de día
+            const day = String(d.getUTCDate()).padStart(2, '0');
+            const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+            const year = d.getUTCFullYear();
+            return `${day}/${month}/${year}`;
+        };
+        // Filas
+        clientData.rows.sort((a,b) => (a.paciente||"").localeCompare(b.paciente||"")); // Ordenar por paciente
+
+        clientData.rows.forEach(r => {
+            ws.addRow([
+                formatFechaUTC(r.fechaInicio),
+                r.protocolo || r.Protocolo || "",
+                r.cliente || "",
+                r.tipoEvaluacion || "",
+                r.sedeNombre || r.Sede || "",
+                r.unidadProduccion || "",
+                r.documento || "",
+                r.paciente || "",
+                r.descripcionPrestacion || "", // Asegúrate que el front mande esto si lo quieres
+                Number(r.importe || 0),
+                r.condicionPago || "",
+                r.estadoPrestacion || ""
+            ]);
+        });
+          
+        // Totales al final de la hoja
+        ws.addRow([]);
+        
+        const subtotal = clientData.totalImporte;
+        const igv = subtotal * 0.18;
+        const total = subtotal + igv;
+
+        // Fila Subtotal
+        const rSub = ws.addRow(["", "", "", "", "", "", "", "", "SUBTOTAL", subtotal]);
+        rSub.getCell(9).font = { bold: true };
+        rSub.getCell(10).numFmt = '"S/"#,##0.00';
+
+        // Fila IGV
+        const rIgv = ws.addRow(["", "", "", "", "", "", "", "", "IGV (18%)", igv]);
+        rIgv.getCell(9).font = { bold: true };
+        rIgv.getCell(10).numFmt = '"S/"#,##0.00';
+
+        // Fila Total
+        const rTot = ws.addRow(["", "", "", "", "", "", "", "", "TOTAL", total]);
+        rTot.getCell(9).font = { bold: true, size: 12 };
+        rTot.getCell(10).font = { bold: true, size: 12 };
+        rTot.getCell(10).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF00" } };
+        rTot.getCell(10).numFmt = '"S/"#,##0.00';
+
+        // Ajustar anchos
+        ws.columns.forEach(col => { col.width = 15; });
+        ws.getColumn(3).width = 30; // Cliente
+        ws.getColumn(8).width = 30; // Paciente
+        ws.getColumn(9).width = 30; // Descripcion
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    res.setHeader("Content-Disposition", `attachment; filename="export_clientes.xlsx"`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    return res.send(Buffer.from(buffer));
+
+  } catch (err) {
+    console.error("Error export:", err);
+    return res.status(500).send("Error interno al exportar.");
+  }
+});
+// =====================================================================
+// POST /liquidar (CORREGIDO: GENERACIÓN DE LLAVES ROBUSTA)
+// =====================================================================
+router.post("/liquidar", async (req, res) => {
+  const transaction = new sql.Transaction(await getPool());
+  try {
+    const { from, to, condicionPago, rows, groupsMetadata, usuario } = req.body;
+
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ ok: false, message: "No se recibieron datos." });
+    }
+
+    let subtotal = 0;
+    const pacientesUnique = new Set();
+    const groupsMap = new Map();
+
+    // HELPER BLINDADO: Convierte todo a String, quita espacios y mayúsculas
+    const makeKey = (cli, uni, tip, sed) => {
+        const c = String(cli || "").trim().toUpperCase();
+        const u = String(uni || "").trim().toUpperCase();
+        const t = String(tip || "").trim().toUpperCase();
+        const s = String(sed || "").trim().toUpperCase();
+        return `${c}||${u}||${t}||${s}`;
+    };
+
+    const findGroupState = (keyBuscada) => {
+        if (!groupsMetadata || !Array.isArray(groupsMetadata)) return 'LIQUIDADO';
+        const meta = groupsMetadata.find(m => 
+            makeKey(m.cliente, m.unidad, m.tipo, m.sede) === keyBuscada
+        );
+        return meta ? meta.estado : 'LIQUIDADO';
+    };
+
+    const cleanRows = rows.map(r => {
+        const importe = Number(r.importe || 0);
+        subtotal += importe;
+        
+        pacientesUnique.add(`${(r.nro || "").trim()}||${(r.documento || "").trim()}`);
+        
+        // Usamos la llave blindada
+        const groupKey = makeKey(r.cliente, r.unidadProduccion, r.tipoEvaluacion, r.sedeNombre);
+        
+        if (!groupsMap.has(groupKey)) {
+            const estadoReal = findGroupState(groupKey);
+            groupsMap.set(groupKey, {
+                // Guardamos los textos limpios para evitar basura en la BD
+                cliente: String(r.cliente || "").trim(),
+                unidad: String(r.unidadProduccion || "").trim(),
+                tipo: String(r.tipoEvaluacion || "").trim(),
+                sede: String(r.sedeNombre || "").trim(),
+                importe: 0,
+                estado: estadoReal 
+            });
+        }
+        groupsMap.get(groupKey).importe += importe;
+
+        return {
+            ...r,
+            fechaInicio: r.fechaInicio ? new Date(r.fechaInicio).toISOString() : null,
+            importe: importe,
+            nro: (r.nro || "").trim(),
+            documento: (r.documento || "").trim(),
+            idPendiente: r.idPendiente || null 
+        };
+    });
+
+    const cleanGroups = Array.from(groupsMap.values());
+    const jsonGroups = JSON.stringify(cleanGroups);
+    const jsonRows = JSON.stringify(cleanRows);
+
+    const igv = subtotal * 0.18;
+    const total = subtotal + igv;
+    const gruposCount = groupsMap.size;
+    const pacientesCount = pacientesUnique.size;
+
+    const poolFact = await getPool();
+    const codeResult = await poolFact.request().query(`SELECT MAX(CAST(SUBSTRING(Codigo, 4, 10) AS INT)) AS lastNum FROM dbo.LiquidacionClientesCab WHERE Codigo LIKE 'LQ-%'`);
+    const lastNum = codeResult.recordset?.[0]?.lastNum || 0;
+    const codigo = `LQ-${String(lastNum + 1).padStart(5, "0")}`;
+
+    await transaction.begin();
+    const IdLiquidacion = crypto.randomUUID();
+
+    await new sql.Request(transaction)
+      .input("IdLiquidacion", sql.UniqueIdentifier, IdLiquidacion)
+      .input("Desde", sql.Date, from)
+      .input("Hasta", sql.Date, to)
+      .input("CondicionPago", sql.NVarChar, condicionPago || "TODAS")
+      .input("Usuario", sql.NVarChar, usuario || "")
+      .input("Subtotal", sql.Decimal(18, 2), subtotal)
+      .input("IGV", sql.Decimal(18, 2), igv)
+      .input("Total", sql.Decimal(18, 2), total)
+      .input("Grupos", sql.Int, gruposCount)
+      .input("Pacientes", sql.Int, pacientesCount)
+      .input("Codigo", sql.NVarChar, codigo)
+      .query(`INSERT INTO dbo.LiquidacionClientesCab (IdLiquidacion, FechaLiquidacion, Desde, Hasta, CondicionPago, Usuario, Subtotal, IGV, Total, Grupos, Pacientes, Codigo, Estado) VALUES (@IdLiquidacion, SYSDATETIME(), @Desde, @Hasta, @CondicionPago, @Usuario, @Subtotal, @IGV, @Total, @Grupos, @Pacientes, @Codigo, 'VIGENTE')`);
+
+    const reqBulk = new sql.Request(transaction);
+    await reqBulk
+        .input("IdLiq", sql.UniqueIdentifier, IdLiquidacion)
+        .input("JsonRows", sql.NVarChar(sql.MAX), jsonRows)
+        .input("JsonGroups", sql.NVarChar(sql.MAX), jsonGroups)
+        .query(`
+            INSERT INTO dbo.LiquidacionClientesGrupos (IdLiquidacion, Cliente, UnidadProduccion, TipoEvaluacion, Sede, Importe, Estado)
+            SELECT @IdLiq, Cliente, Unidad, Tipo, Sede, Importe, Estado
+            FROM OPENJSON(@JsonGroups) WITH (Cliente NVARCHAR(200) '$.cliente', Unidad NVARCHAR(200) '$.unidad', Tipo NVARCHAR(200) '$.tipo', Sede NVARCHAR(100) '$.sede', Importe DECIMAL(18,2) '$.importe', Estado NVARCHAR(20) '$.estado');
+
+            INSERT INTO dbo.LiquidacionClientesDet (IdLiquidacion, Nro, Documento, Paciente, Cliente, UnidadProduccion, TipoEvaluacion, Sede, Protocolo, FechaInicio, DescripcionPrestacion, Importe, CondicionPago, RucCliente, RazonSocial, Evaluador)
+            SELECT @IdLiq, Nro, Documento, Paciente, Cliente, UnidadProduccion, TipoEvaluacion, Sede, Protocolo, FechaInicio, DescripcionPrestacion, Importe, CondicionPago, RucCliente, RazonSocial, Evaluador
+            FROM OPENJSON(@JsonRows) WITH (Nro NVARCHAR(50) '$.nro', Documento NVARCHAR(20) '$.documento', Paciente NVARCHAR(200) '$.paciente', Cliente NVARCHAR(200) '$.cliente', UnidadProduccion NVARCHAR(200) '$.unidadProduccion', TipoEvaluacion NVARCHAR(200) '$.tipoEvaluacion', Sede NVARCHAR(100) '$.sedeNombre', Protocolo NVARCHAR(200) '$.protocolo', FechaInicio DATE '$.fechaInicio', DescripcionPrestacion NVARCHAR(300) '$.descripcionPrestacion', Importe DECIMAL(18,2) '$.importe', CondicionPago NVARCHAR(50) '$.condicionPago', RucCliente NVARCHAR(20) '$.rucCliente', RazonSocial NVARCHAR(200) '$.razonSocial', Evaluador NVARCHAR(200) '$.evaluador');
+
+            UPDATE P SET Estado = 'LIQUIDADO', UpdatedAt = SYSDATETIME()
+            FROM dbo.LiquidacionClientesPendientes P
+            INNER JOIN OPENJSON(@JsonRows) WITH (IdPendiente UNIQUEIDENTIFIER '$.idPendiente', Nro NVARCHAR(50) '$.nro', Documento NVARCHAR(20) '$.documento') J 
+            ON ((J.IdPendiente IS NOT NULL AND P.IdPendiente = J.IdPendiente) OR (J.IdPendiente IS NULL AND LTRIM(RTRIM(P.Nro)) = LTRIM(RTRIM(J.Nro)) AND LTRIM(RTRIM(ISNULL(P.Documento, ''))) = LTRIM(RTRIM(ISNULL(J.Documento, '')))))
+            WHERE P.Estado = 'PENDIENTE';
+        `);
+
+    await transaction.commit();
+    return res.json({ ok: true, message: "Liquidación exitosa.", codigo });
+  } catch (err) {
+    if (transaction) await transaction.rollback();
+    console.error("Error liquidar:", err);
+    return res.status(500).json({ ok: false, message: "Error al procesar la liquidación." });
+  }
+});
+// =====================================================================
+// GET /process (CORREGIDO: MATCHING PERFECTO PARA RECUPERAR IMPORTES)
+// =====================================================================
+router.get("/process", async (req, res) => {
   try {
     const { from, to, condicionPago } = req.query;
-    const pool = await getPool(); // FacturacionCBMedic
+    if (!from || !to) return res.status(400).json({ ok: false, message: "Faltan fechas." });
 
-    let rq = pool.request();
-    let where = "WHERE 1=1";
+    const poolCb = await getPoolCbmedic();
+    const poolFact = await getPool(); 
 
-    if (from) {
-      rq = rq.input("DesdeMin", sql.Date, from);
-      where += " AND Desde >= @DesdeMin";
+    // HELPER BLINDADO: Idéntico al del POST
+    const makeKey = (cli, uni, tip, sed) => {
+        const c = String(cli || "").trim().toUpperCase();
+        const u = String(uni || "").trim().toUpperCase();
+        const t = String(tip || "").trim().toUpperCase();
+        const s = String(sed || "").trim().toUpperCase();
+        return `${c}||${u}||${t}||${s}`;
+    };
+
+    // 1. SP PRINCIPAL
+    const resultSP = await poolCb.request()
+      .input("FechaDesde", sql.Date, from)
+      .input("FechaHasta", sql.Date, to)
+      .input("CondicionPago", sql.VarChar(20), condicionPago || "TODAS")
+      .query(`EXEC dbo.pa_liq_clientes_rango_export @FechaDesde, @FechaHasta, @CondicionPago`);
+    let rowsFromSP = (resultSP.recordset || []).map(r => ({ ...r, _isRescue: false }));
+
+    // 2. RESCATE
+    const year = new Date(from).getFullYear();
+    const startOfYear = `${year}-01-01`;
+    let rowsRescue = [];
+    if (from > startOfYear) {
+        const rescueQuery = `
+          SELECT 
+            Nro = CONVERT(VARCHAR(20), v.val_aten_codigo) + '_' + CONVERT(VARCHAR(20), v.val_aten_estab),
+            [Fecha Inicio] = ia.aten_fecha_evaluacion,
+            [Protocolo] = pa.plan_denominacion,
+            [Tipo de Evaluación] = CASE WHEN UPPER(ISNULL(mte.tipexam_denominacion, '')) LIKE '%PRE%' THEN 'PRE OCUPACIONAL' WHEN UPPER(ISNULL(mte.tipexam_denominacion, '')) LIKE '%POST%' THEN 'POST OCUPACIONAL' WHEN UPPER(ISNULL(mte.tipexam_denominacion, '')) LIKE '%PERIOD%' THEN 'PERIODICO' ELSE 'PRE OCUPACIONAL' END,
+            [Documento] = p.paci_documento_identidad,
+            [Paciente] = p.paci_ap_paterno + ' ' + p.paci_ap_materno + ', ' + p.paci_nombres,
+            [Importe] = ISNULL(vap.vp_precio_plan, ISNULL(vsm.vsm_precio_plan, vam.vm_precio_plan)),
+            [Condición de Pago] = ISNULL(emp.empresa_fax, ''), 
+            [Cliente] = emp.empresa_razon_social,
+            [Unidad de Producción] = up.unidad_denominacion,
+            [Sede] = CASE CONVERT(VARCHAR(10), v.val_aten_estab) WHEN '3' THEN 'EMO - MEGA PLAZA' WHEN '8' THEN 'IN HOUSE OCUPACIONAL' WHEN '10' THEN 'EMO - GUARDIA' WHEN '11' THEN 'INTEGRAMEDICA (MEGA PLAZA)' ELSE NULL END,
+            [Descripción de la Prestación] = ISNULL(vap.vp_denominacion, ISNULL(vsm.vsm_smodulod, vam.vm_modulod)),
+            [Estado de la Prestación] = 'ATENDIDO',
+            [EstadoRescate] = lcp.Estado, [IdPendiente] = lcp.IdPendiente
+          FROM valorizacion v
+          INNER JOIN ind_atencion ia ON ia.aten_numero = v.val_aten_codigo AND ia.aten_establecimiento = v.val_aten_estab
+          INNER JOIN plan_atencion pa ON v.val_plan = pa.plan_id
+          INNER JOIN mae_tipo_examen mte ON v.val_tipo = mte.tipexam_codigo
+          INNER JOIN paciente p ON v.val_paciente = p.paci_id
+          INNER JOIN val_atencion_modulo vam ON vam.vm_vestab = v.val_estab AND vam.vm_vnumero = v.val_codigo
+          LEFT JOIN val_atencion_smodulo vsm ON vsm.vsm_vestab = vam.vm_vestab AND vsm.vsm_vnumero = vam.vm_vnumero AND vsm.vsm_modulo = vam.vm_modulo AND vsm.vsm_modulo IN (6,4,15,5)
+          LEFT JOIN val_atencion_prueba vap ON vap.vp_vestab = vsm.vsm_vestab AND vap.vp_vnumero = vsm.vsm_vnumero AND vap.vp_modulo = vsm.vsm_modulo AND vap.vp_submod = vsm.vsm_smodulo 
+          INNER JOIN ubicacion_trabajo ut ON ut.ubicacion_id = v.val_ubicacion
+          INNER JOIN empresa emp ON ut.ubicacion_empresa_id = emp.empresa_id
+          INNER JOIN unidad_produccion up ON ut.ubicacion_unidad_id = up.unidad_id
+          INNER JOIN FacturacionCBMedic.dbo.LiquidacionClientesPendientes lcp ON LTRIM(RTRIM(lcp.Nro)) COLLATE DATABASE_DEFAULT = LTRIM(RTRIM(CONVERT(VARCHAR(20), v.val_aten_codigo) + '_' + CONVERT(VARCHAR(20), v.val_aten_estab))) COLLATE DATABASE_DEFAULT AND LTRIM(RTRIM(ISNULL(lcp.Documento, ''))) COLLATE DATABASE_DEFAULT = LTRIM(RTRIM(ISNULL(p.paci_documento_identidad, ''))) COLLATE DATABASE_DEFAULT
+          WHERE v.val_anulado = 'N' AND vam.vm_eliminado = 'N' AND v.val_aten_estab IN (3, 8, 10, 11) AND NOT (vam.vm_modulo <> 1 AND vsm.vsm_smodulo IS NULL) AND lcp.Estado IN ('PENDIENTE', 'LIQUIDADO') AND ia.aten_fecha_evaluacion >= @StartOfYear AND ia.aten_fecha_evaluacion < @FechaDesde
+        `;
+        try {
+            const resRescue = await poolCb.request().input("StartOfYear", sql.Date, startOfYear).input("FechaDesde", sql.Date, from).query(rescueQuery);
+            rowsRescue = (resRescue.recordset || []).map(r => ({ ...r, _isRescue: true }));
+        } catch(e) { rowsRescue = []; }
     }
 
-    if (to) {
-      rq = rq.input("HastaMax", sql.Date, to);
-      where += " AND Hasta <= @HastaMax";
-    }
+    // 3. LIQUIDADOS
+    const liqQuery = `SELECT d.Nro, d.Documento, d.FechaInicio, d.Protocolo, d.Cliente, d.UnidadProduccion, d.TipoEvaluacion, d.Sede, d.Paciente, d.Importe, d.CondicionPago, [Descripción de la Prestación] = d.DescripcionPrestacion, [Estado de la Prestación] = 'ATENDIDO' FROM dbo.LiquidacionClientesDet d INNER JOIN dbo.LiquidacionClientesCab c ON d.IdLiquidacion = c.IdLiquidacion WHERE c.Estado = 'VIGENTE' AND d.FechaInicio >= @From AND d.FechaInicio <= @To`;
+    const resLiq = await poolFact.request().input("From", sql.Date, from).input("To", sql.Date, to).query(liqQuery);
+    let rowsLiquidated = (resLiq.recordset || []).map(r => ({ ...r, _source: 'LIQ' }));
 
-    if (condicionPago && condicionPago !== "TODAS") {
-      rq = rq.input(
-        "CondicionPago",
-        sql.NVarChar,
-        condicionPago.toString().trim().toUpperCase()
-      );
-      where += " AND UPPER(CondicionPago) = @CondicionPago";
-    }
+    // 4. PENDIENTES
+    const pendResult = await poolFact.request().input("Desde", sql.Date, startOfYear).input("Hasta", sql.Date, to).query(`SELECT Nro, Documento FROM dbo.LiquidacionClientesPendientes WHERE Estado='PENDIENTE'`);
+    const pendientesSet = new Set(pendResult.recordset.map(p => `${(p.Nro||"").trim()}||${(p.Documento||"").trim()}`));
 
-    const query = `
-      SELECT
-        IdLiquidacion,
-        FechaLiquidacion,
-        Desde,
-        Hasta,
-        CondicionPago,
-        Subtotal,
-        IGV,
-        Total,
-        Grupos,
-        Pacientes,
-        Observacion,
-        Codigo,
-        Estado
-      FROM dbo.LiquidacionClientesCab
-      ${where}
-      ORDER BY FechaLiquidacion DESC, Desde DESC, Hasta DESC
-    `;
-
-    const result = await rq.query(query);
-    return res.json({
-      ok: true,
-      items: result.recordset || [],
+    // 5. CÓDIGOS Y ESTADOS REALES (Usando Helper Key)
+    const codigosResult = await poolFact.request().input("Desde", sql.Date, from).input("Hasta", sql.Date, to).query(`
+        SELECT c.Codigo, c.FechaLiquidacion, g.Cliente, g.UnidadProduccion, g.TipoEvaluacion, g.Sede, g.Estado, g.Importe 
+        FROM dbo.LiquidacionClientesGrupos g
+        JOIN dbo.LiquidacionClientesCab c ON g.IdLiquidacion = c.IdLiquidacion 
+        WHERE c.Estado = 'VIGENTE' AND ((c.Desde <= @Hasta AND c.Hasta >= @Desde))
+        ORDER BY c.FechaLiquidacion ASC, c.Codigo ASC
+    `);
+    const groupsDbMap = new Map();
+    (codigosResult.recordset || []).forEach(r => {
+       const tipo = mapTipoEvaluacion(r.TipoEvaluacion || "");
+       const k = makeKey(r.Cliente, r.UnidadProduccion, tipo, r.Sede);
+       if (!groupsDbMap.has(k)) groupsDbMap.set(k, { codigo: r.Codigo, estado: r.Estado, importeTotal: 0 });
+       const g = groupsDbMap.get(k);
+       g.importeTotal += Number(r.Importe || 0);
+       g.codigo = r.Codigo; g.estado = r.Estado; 
     });
+
+    // 6. MERGE Y DETALLES
+    const mergedMap = new Map();
+    const getUniqueKey = (r) => {
+        const nro = (r.Nro||"").trim();
+        const doc = (r["Documento"]||r["N° Documento"]||"").trim();
+        const rawDesc = (r["Descripción de la Prestación"] || r["DescripcionPrestacion"] || "GENERICO");
+        const desc = String(rawDesc).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z0-9]/g, ""); 
+        return `${nro}|${doc}|${desc}`; 
+    };
+    [...rowsRescue, ...rowsFromSP].forEach(r => { const key = getUniqueKey(r); mergedMap.set(key, { ...r, _isLiquidado: false }); });
+    rowsLiquidated.forEach(r => { const key = getUniqueKey(r); if (mergedMap.has(key)) mergedMap.set(key, { ...mergedMap.get(key), _forceLiquidated: true }); else mergedMap.set(key, { ...r, _isLiquidado: true }); });
+
+    const details = [];
+    for (const r of mergedMap.values()) {
+      if (condicionPago && condicionPago !== "TODAS") {
+         const cp = (r["Condición de Pago"] || "").toUpperCase();
+         if (cp !== condicionPago) continue;
+      }
+      const nro = (r.Nro||"").trim(); const doc = (r["Documento"]||r["N° Documento"]||"").trim(); const keyShort = `${nro}||${doc}`;
+      let estaLiquidado = !!r._forceLiquidated || !!r._isLiquidado;
+      if (r._isRescue && r["EstadoRescate"] === 'LIQUIDADO') estaLiquidado = true;
+      const esRescate = r._isRescue === true;
+      const esPendienteManual = pendientesSet.has(keyShort);
+      const isPendienteFinal = estaLiquidado ? false : (esRescate ? false : esPendienteManual);
+
+      details.push({
+        nro, documento: doc, 
+        fechaInicio: r["Fecha Inicio"], 
+        cliente: r["Cliente"] || r["RAZÓN SOCIAL"] || "", 
+        unidadProduccion: r["Unidad de Producción"] || "", 
+        tipoEvaluacion: mapTipoEvaluacion(r["Tipo de Evaluación"]||""), 
+        condicionPago: r["Condición de Pago"] || "", 
+        paciente: r["Paciente"] || "", 
+        descripcionPrestacion: r["Descripción de la Prestación"] || r["DescripcionPrestacion"] || "", 
+        precioCb: Number(r["Importe"] || r["Precio CB"] || 0), 
+        sedeNombre: r["Sede"] ? r["Sede"] : mapSedeFromNro(r.Nro).sedeNombre, 
+        estadoPrestacion: r["Estado de la Prestación"] || "ATENDIDO", 
+        protocolo: r["Protocolo"] || "",
+        isPendiente: isPendienteFinal, 
+        estaLiquidado: estaLiquidado, 
+        origenPendiente: esRescate && !estaLiquidado, 
+        idPendiente: r["IdPendiente"] || null
+      });
+    }
+
+    // 7. AGRUPAMIENTO FINAL
+    const groupMap = new Map();
+    for (const row of details) {
+      const k = makeKey(row.cliente, row.unidadProduccion, row.tipoEvaluacion, row.sedeNombre);
+      let grp = groupMap.get(k);
+      if (!grp) { grp = { id: k, cliente: row.cliente, unidadProduccion: row.unidadProduccion, tipoEvaluacion: row.tipoEvaluacion, sedeNombre: row.sedeNombre, importeTotal: 0, importeLiquidado: 0, importeDisponible: 0, rows: [] }; groupMap.set(k, grp); }
+      const monto = Number(row.precioCb||0); grp.importeTotal += monto;
+      if (row.estaLiquidado) grp.importeLiquidado += monto; else if (row.isPendiente) {} else grp.importeDisponible += monto;
+      grp.rows.push(row);
+    }
+
+    for (const grp of groupMap.values()) {
+        grp.estadoLiquidado = "NO";
+        if (groupsDbMap.has(grp.id)) {
+            const dbInfo = groupsDbMap.get(grp.id);
+            grp.codigo = dbInfo.codigo;
+            
+            // Prioridad: Si BD dice PARCIAL o hay disponible nuevo -> PARCIAL
+            if (dbInfo.estado === "PARCIAL" || grp.importeDisponible > 0.50) {
+                 grp.estadoLiquidado = "PARCIAL";
+                 grp.importe = dbInfo.importeTotal + grp.importeDisponible;
+            } else {
+                 grp.estadoLiquidado = "LIQUIDADO";
+                 grp.importe = dbInfo.importeTotal;
+            }
+        } else {
+            grp.importe = grp.importeDisponible;
+        }
+    }
+
+    const groups = Array.from(groupMap.values()).sort((a,b) => (a.cliente||"").localeCompare(b.cliente||""));
+    const detailsByGroupId = {};
+    groups.forEach(g => { detailsByGroupId[g.id] = g.rows; delete g.rows; });
+    const clientesSet = new Set(details.map(d=>d.cliente)); const tiposSet = new Set(details.map(d=>d.tipoEvaluacion)); const sedesSet = new Set(details.map(d=>d.sedeNombre));
+    return res.json({ ok: true, groups, detailsByGroupId, filters: { clientes: Array.from(clientesSet).sort(), tipos: Array.from(tiposSet).sort(), sedes: Array.from(sedesSet).sort(), estadosPrestacion: [] } });
   } catch (err) {
-    console.error("Error en GET /api/clientes/liquidaciones:", err);
-    return res.status(500).json({
-      ok: false,
-      message: "Error al listar liquidaciones de clientes.",
-      debug: err.message,
-    });
+    console.error("Error process:", err);
+    return res.status(500).json({ ok: false, message: "Error al procesar." });
   }
 });
 /**
@@ -1615,20 +703,7 @@ router.get("/liquidaciones/:id", async (req, res) => {
   }
 });
 
-/** 
- * GET /api/clientes/detalle-con-pendientes
- * Query:
- *   from, to, cliente, unidad, tipo, sede
- *
- * Devuelve:
- *   - rowsNormales: del SP principal
- *   - rowsPendientes: de LiquidacionClientesPendientes
- */
-/**
- * POST /api/clientes/liquidaciones/:id/anular
- * Anula una liquidación (marca Estado = 'ANULADA').
- * Body: { usuario?: string }
- */
+
 router.post("/liquidaciones/:id/anular", async (req, res) => {
   try {
     const { id } = req.params;
@@ -1671,94 +746,126 @@ router.post("/liquidaciones/:id/anular", async (req, res) => {
     });
   }
 });
-// clientes.js – reemplaza el contenido de router.get("/detalle-con-pendientes", ...)
-
+// =====================================================================
+// GET /detalle-con-pendientes (CORREGIDO: CAMPOS PARA EXCEL + ID)
+// =====================================================================
 router.get("/detalle-con-pendientes", async (req, res) => {
   try {
     const { from, to, cliente, unidad, tipo, sede } = req.query;
-
-    if (!from || !to || !cliente || !unidad || !tipo || !sede) {
-      return res.status(400).json({
-        ok: false,
-        message: "Faltan parámetros para cargar detalle.",
-      });
-    }
+    if (!from || !to) return res.status(400).json({ ok: false, message: "Faltan datos." });
 
     const poolCb = await getPoolCbmedic();
-    const data = await poolCb
-      .request()
-      .input("FechaDesde", sql.Date, from)
-      .input("FechaHasta", sql.Date, to)
-      .query(`
-        EXEC dbo.pa_liq_clientes_rango_export
-          @FechaDesde,
-          @FechaHasta,
-          'TODAS'
-      `);
-
-    const rows = data.recordset || [];
-
-    const rowsNormales = rows.filter((r) => {
-      return (
-        (r["Cliente"] || r["RAZÓN SOCIAL"]) === cliente &&
-        r["Unidad de Producción"] === unidad &&
-        r["Tipo de Evaluación"] === tipo &&
-        r["Sede"] === sede
-      );
-    });
-
-    // 2) Pendientes (mismo criterio que /process)
     const poolFact = await getPool();
-    const pend = await poolFact
-      .request()
-      .input("Cliente", sql.NVarChar, cliente)
-      .input("Unidad", sql.NVarChar, unidad)
-      .input("Tipo", sql.NVarChar, tipo)
-      .input("Sede", sql.NVarChar, sede)
-      .input("DesdeActual", sql.Date, from)
-      .input("HastaActual", sql.Date, to)
-      .query(`
-        SELECT 
-          Nro,
-          Documento,
-          Paciente,
-          Cliente,
-          UnidadProduccion,
-          TipoEvaluacion,
-          Sede,
-          FechaInicio,
-          Importe,
-          CondicionPago,
-          Desde,
-          Hasta,
-          Estado,
-          CASE 
-            WHEN Estado = 'PENDIENTE' 
-              AND Desde = @DesdeActual 
-              AND Hasta = @HastaActual
-            THEN 1
-            ELSE 0
-          END AS EsPendienteActual
-        FROM dbo.LiquidacionClientesPendientes
-        WHERE Estado IN ('PENDIENTE','REACTIVADO')
-          AND Cliente = @Cliente
-          AND UnidadProduccion = @Unidad
-          AND TipoEvaluacion = @Tipo
-          AND Sede = @Sede
-      `);
 
-    return res.json({
-      ok: true,
-      rowsNormales,
-      rowsPendientes: pend.recordset || [],
-    });
+    // 1. CARGA ACTUAL
+    const dataSP = await poolCb.request().input("FechaDesde", sql.Date, from).input("FechaHasta", sql.Date, to).query(`EXEC dbo.pa_liq_clientes_rango_export @FechaDesde, @FechaHasta, 'TODAS'`);
+    let rowsAll = (dataSP.recordset || []).map(r => ({ ...r, _isRescue: false }));
+
+    // 2. RESCATE
+    const year = new Date(from).getFullYear();
+    const startOfYear = `${year}-01-01`;
+    if (from > startOfYear) {
+        const rescueQuery = `
+          SELECT 
+            Nro = CONVERT(VARCHAR(20), v.val_aten_codigo) + '_' + CONVERT(VARCHAR(20), v.val_aten_estab),
+            [Fecha Inicio] = ia.aten_fecha_evaluacion,
+            [Protocolo] = pa.plan_denominacion,
+            [Tipo de Evaluación] = 'PRE OCUPACIONAL',
+            [Documento] = p.paci_documento_identidad,
+            [Paciente] = p.paci_ap_paterno + ' ' + p.paci_ap_materno + ', ' + p.paci_nombres,
+            [Importe] = ISNULL(vap.vp_precio_plan, ISNULL(vsm.vsm_precio_plan, vam.vm_precio_plan)),
+            [Condición de Pago] = ISNULL(emp.empresa_fax, ''), 
+            [Cliente] = emp.empresa_razon_social,
+            [Unidad de Producción] = up.unidad_denominacion,
+            [Sede] = CASE CONVERT(VARCHAR(10), v.val_aten_estab) WHEN '3' THEN 'EMO - MEGA PLAZA' WHEN '8' THEN 'IN HOUSE OCUPACIONAL' WHEN '10' THEN 'EMO - GUARDIA' WHEN '11' THEN 'INTEGRAMEDICA (MEGA PLAZA)' ELSE NULL END,
+            [Descripción de la Prestación] = ISNULL(vap.vp_denominacion, ISNULL(vsm.vsm_smodulod, vam.vm_modulod)),
+            [Estado de la Prestación] = 'ATENDIDO',
+            [EstadoRescate] = lcp.Estado,
+            [IdPendiente] = lcp.IdPendiente
+          FROM valorizacion v
+          INNER JOIN ind_atencion ia ON ia.aten_numero = v.val_aten_codigo AND ia.aten_establecimiento = v.val_aten_estab
+          INNER JOIN plan_atencion pa ON v.val_plan = pa.plan_id
+          INNER JOIN mae_tipo_examen mte ON v.val_tipo = mte.tipexam_codigo
+          INNER JOIN paciente p ON v.val_paciente = p.paci_id
+          INNER JOIN val_atencion_modulo vam ON vam.vm_vestab = v.val_estab AND vam.vm_vnumero = v.val_codigo
+          LEFT  JOIN val_atencion_smodulo vsm ON vsm.vsm_vestab = vam.vm_vestab AND vsm.vsm_vnumero = vam.vm_vnumero AND vsm.vsm_modulo = vam.vm_modulo AND vsm.vsm_modulo IN (6,4,15,5)
+          LEFT  JOIN val_atencion_prueba vap ON vap.vp_vestab = vsm.vsm_vestab AND vap.vp_vnumero = vsm.vsm_vnumero AND vap.vp_modulo = vsm.vsm_modulo AND vap.vp_submod = vsm.vsm_smodulo 
+          INNER JOIN ubicacion_trabajo ut ON ut.ubicacion_id = v.val_ubicacion
+          INNER JOIN empresa emp ON ut.ubicacion_empresa_id = emp.empresa_id
+          INNER JOIN unidad_produccion up ON ut.ubicacion_unidad_id = up.unidad_id
+          INNER JOIN FacturacionCBMedic.dbo.LiquidacionClientesPendientes lcp ON lcp.Nro COLLATE DATABASE_DEFAULT = (CONVERT(VARCHAR(20), v.val_aten_codigo) + '_' + CONVERT(VARCHAR(20), v.val_aten_estab)) COLLATE DATABASE_DEFAULT AND lcp.Documento COLLATE DATABASE_DEFAULT = p.paci_documento_identidad COLLATE DATABASE_DEFAULT
+          INNER JOIN plan_atencion pa2 ON v.val_plan = pa2.plan_id
+          WHERE v.val_anulado = 'N' AND vam.vm_eliminado = 'N' AND v.val_aten_estab IN (3, 8, 10, 11) AND NOT (vam.vm_modulo <> 1 AND vsm.vsm_smodulo IS NULL) 
+          AND lcp.Estado IN ('PENDIENTE', 'LIQUIDADO') 
+          AND ia.aten_fecha_evaluacion >= @StartOfYear AND ia.aten_fecha_evaluacion < @FechaDesde
+        `;
+        try {
+            const resRescue = await poolCb.request().input("StartOfYear", sql.Date, startOfYear).input("FechaDesde", sql.Date, from).query(rescueQuery);
+            const rescued = (resRescue.recordset || []).map(r => ({ ...r, _isRescue: true }));
+            rowsAll = [...rescued, ...rowsAll];
+        } catch(e) {}
+    }
+
+    // 3. RECUPERAR ESTADO REAL
+    const liqQuery = `SELECT Nro, Documento FROM dbo.LiquidacionClientesDet d JOIN dbo.LiquidacionClientesCab c ON d.IdLiquidacion=c.IdLiquidacion WHERE c.Estado='VIGENTE'`;
+    const resLiq = await poolFact.request().query(liqQuery);
+    const liquidadosSet = new Set((resLiq.recordset||[]).map(r => `${(r.Nro||"").trim()}||${(r.Documento||"").trim()}`));
+
+    const pendResult = await poolFact.request().query(`SELECT Nro, Documento FROM dbo.LiquidacionClientesPendientes WHERE Estado='PENDIENTE'`);
+    const pendientesSet = new Set(pendResult.recordset.map(p => `${(p.Nro||"").trim()}||${(p.Documento||"").trim()}`));
+
+    const rowsNormales = [];
+    
+    for (const r of rowsAll) {
+       const rCliente = r["Cliente"] || r["RAZÓN SOCIAL"];
+       const rUnidad = r["Unidad de Producción"];
+       const rTipo = mapTipoEvaluacion(r["Tipo de Evaluación"] || "");
+       const { sedeNombre } = r["Sede"] ? { sedeNombre: r["Sede"] } : mapSedeFromNro(r.Nro);
+
+       if (rCliente !== cliente || rUnidad !== unidad || rTipo !== tipo || sedeNombre !== sede) continue;
+
+       const nro = (r.Nro||"").trim();
+       const doc = (r["Documento"]||r["N° Documento"]||"").trim();
+       const key = `${nro}||${doc}`;
+       
+       let estaLiquidado = liquidadosSet.has(key);
+       if (r._isRescue && r["EstadoRescate"] === 'LIQUIDADO') {
+          estaLiquidado = true;
+       }
+
+       const esRescate = r._isRescue === true;
+       const esPendienteManual = pendientesSet.has(key);
+       const isPendienteFinal = esRescate ? false : esPendienteManual;
+
+       // === CORRECCIÓN DE NOMBRES PARA EXCEL ===
+       // Usamos nombres de propiedades estándar (camelCase) que espera la función de exportación
+       rowsNormales.push({
+          nro: nro,
+          documento: doc,
+          fechaInicio: r["Fecha Inicio"],
+          cliente: rCliente,
+          unidadProduccion: rUnidad,
+          tipoEvaluacion: rTipo,
+          condicionPago: r["Condición de Pago"] || "", // <-- Corregido
+          paciente: r["Paciente"],
+          precioCb: Number(r["Importe"] || r["Precio CB"] || 0),
+          importe: Number(r["Importe"] || r["Precio CB"] || 0), // Duplicado por seguridad
+          sedeNombre: sedeNombre,
+          estadoPrestacion: r["Estado de la Prestación"] || "ATENDIDO", // <-- Corregido
+          descripcionPrestacion: r["Descripción de la Prestación"] || r["DescripcionPrestacion"] || "", // <-- Corregido y Agregado
+          protocolo: r["Protocolo"] || "", // <-- Agregado
+          
+          estaLiquidado: estaLiquidado,
+          isPendiente: isPendienteFinal, 
+          origenPendiente: esRescate,
+          idPendiente: r["IdPendiente"] || null
+       });
+    }
+
+    return res.json({ ok: true, rowsNormales, rowsPendientes: [] }); 
   } catch (e) {
-    console.error("Error detalle-con-pendientes:", e);
-    return res.status(500).json({
-      ok: false,
-      message: "Error al cargar detalle con pendientes.",
-      debug: e.message,
-    });
+    console.error(e);
+    return res.status(500).json({ ok: false, message: "Error detalle." });
   }
 });
 // POST /api/clientes/pendientes/anular
@@ -1813,6 +920,57 @@ router.post("/pendientes/anular", async (req, res) => {
       message: "Error al anular pendiente.",
       debug: err.message,
     });
+  }
+});
+// ==========================================
+// GET /history: Histórico Unificado
+// ==========================================
+router.get("/history", async (req, res) => {
+  try {
+    const { type, from, to } = req.query;
+    if (!from || !to) return res.status(400).json({ message: "Faltan fechas" });
+
+    const pool = await getPool();
+    let tableName = "";
+    
+    switch (type) {
+        case "HHMM": tableName = "dbo.LiquidacionHonorariosCab"; break;
+        case "AUDITORIAS": tableName = "dbo.LiquidacionAuditoriasCab"; break;
+        default: tableName = "dbo.LiquidacionClientesCab"; break; 
+    }
+
+    const result = await pool.request()
+      .input("Desde", sql.Date, from)
+      .input("Hasta", sql.Date, to)
+      .query(`
+        SELECT 
+            IdLiquidacion,
+            Codigo,
+            FechaLiquidacion,
+            Desde, 
+            Hasta, 
+            CondicionPago,
+            Subtotal,
+            IGV,
+            Total,
+            Grupos,
+            Pacientes,
+            Estado,
+            UsuarioAnula,
+            FechaAnulacion,
+            Usuario as UsuarioCreador
+        FROM ${tableName}
+        WHERE 
+            -- LOGICA DE INTERSECCION: Muestra si el periodo se solapa con el filtro
+            (Desde <= @Hasta AND Hasta >= @Desde)
+        ORDER BY Codigo DESC
+      `);
+
+    res.json({ ok: true, rows: result.recordset });
+
+  } catch (e) {
+    console.error("Error history:", e);
+    res.status(500).json({ message: "Error al cargar histórico" });
   }
 });
 export default router;

@@ -1,598 +1,364 @@
-// src/pages/Valorizar.jsx
-import React, { useMemo, useState } from "react";
-import { fetchClientesProcess } from "../lib/api";
-
-// Utilidad simple para formato moneda
-function formatMoney(v) {
-  if (!v || isNaN(v)) return "0.00";
-  return v.toLocaleString("es-PE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
+import { useState } from "react";
 
 export default function Valorizar() {
-  // ---- Estado de proceso (traer liquidaciones) ----
-  const [desde, setDesde] = useState("");
-  const [hasta, setHasta] = useState("");
-  const [condicionPago, setCondicionPago] = useState("TODAS");
-
+  // --- ESTADOS ---
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [condicionPago, setCondicionPago] = useState("TODOS");
+  
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [errorProcess, setErrorProcess] = useState("");
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  
+  // Modals
+  const [modalFacturarOpen, setModalFacturarOpen] = useState(false);
+  const [facturaManual, setFacturaManual] = useState("");
+  
+  const [modalAnularOpen, setModalAnularOpen] = useState(false);
+  const [notaCredito, setNotaCredito] = useState("");
 
-  const [groups, setGroups] = useState([]); // grupos obtenidos del backend
-  const [filters, setFilters] = useState({
-    clientes: [],
-    tipos: [],
-  });
-
-  // ---- Filtros de resumen (sobre los grupos ya cargados) ----
-  const [filtroCliente, setFiltroCliente] = useState("TODOS");
-  const [filtroTipo, setFiltroTipo] = useState("TODOS");
-  const [filtroEstadoVal, setFiltroEstadoVal] = useState("TODOS"); // TODOS | SIN | CON
-
-  // ---- Selección de filas ----
-  const [selectedIds, setSelectedIds] = useState([]);
-
-  // ---- Estado de valorización (solo en memoria) ----
-  // valorizationById[id] = { tipo: 'FACTURA' | 'NC', serie, numero }
-  const [valorizationById, setValorizationById] = useState({});
-
-  // ---- Modal de valorización ----
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalTipo, setModalTipo] = useState("FACTURA");
-  const [modalSerie, setModalSerie] = useState("");
-  const [modalNumero, setModalNumero] = useState("");
-
-  // ----------------- Llamar al backend (mismo endpoint de Clientes) -----------------
-  const handleProcesar = async (e) => {
-    e.preventDefault();
-    setErrorProcess("");
-
-    if (!desde || !hasta) {
-      setErrorProcess("Selecciona un rango de fechas.");
-      return;
-    }
-
+  // --- BUSCAR ---
+  async function handleSearch(e) {
+    e?.preventDefault();
+    if (!from || !to) return alert("Seleccione fechas");
+    setLoading(true);
     try {
-      setLoading(true);
-      setSelectedIds([]);
-      // mismo endpoint que usa la pantalla de Liquidación de Clientes
-      const data = await fetchClientesProcess({
-        desde,
-        hasta,
-        condicionPago, // el backend puede ignorarlo si aún no lo usa
-      });
-
-      setGroups(data.groups || []);
-      setFilters(data.filters || { clientes: [], tipos: [] });
-
-      // No borramos las valorizaciones anteriores, pero podrías hacerlo aquí si prefieres:
-      // setValorizationById({});
-    } catch (err) {
-      console.error(err);
-      setErrorProcess("Ocurrió un error al procesar las liquidaciones.");
+      const params = new URLSearchParams({ from, to, condicion: condicionPago });
+      const res = await fetch(`/api/valorizacion/process?${params}`);
+      const data = await res.json();
+      if (data.ok) {
+        setRows(data.rows);
+        setSelectedIds(new Set()); // Reset selección
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Error al cargar datos");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  // ----------------- Derivados: grupos filtrados y totales -----------------
-  const gruposFiltrados = useMemo(() => {
-    return (groups || []).filter((g) => {
-      if (filtroCliente !== "TODOS" && g.cliente !== filtroCliente) return false;
-      if (filtroTipo !== "TODOS" && g.tipoEvaluacion !== filtroTipo) return false;
-
-      const val = valorizationById[g.id];
-      if (filtroEstadoVal === "SIN" && val) return false;
-      if (filtroEstadoVal === "CON" && !val) return false;
-
-      return true;
+  // --- SELECCION ---
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
     });
-  }, [groups, filtroCliente, filtroTipo, filtroEstadoVal, valorizationById]);
-
-  const totalVisible = useMemo(() => {
-    return gruposFiltrados.reduce((acc, g) => acc + (g.importe || 0), 0);
-  }, [gruposFiltrados]);
-
-  const totalSeleccionado = useMemo(() => {
-    return gruposFiltrados
-      .filter((g) => selectedIds.includes(g.id))
-      .reduce((acc, g) => acc + (g.importe || 0), 0);
-  }, [gruposFiltrados, selectedIds]);
-
-  // ----------------- Selección -----------------
-  const toggleSelectOne = (id) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
   };
 
-  const toggleSelectAllVisible = () => {
-    const visiblesIds = gruposFiltrados.map((g) => g.id);
-    const allSelected = visiblesIds.every((id) => selectedIds.includes(id));
-
-    if (allSelected) {
-      // desmarcar visibles
-      setSelectedIds((prev) => prev.filter((id) => !visiblesIds.includes(id)));
-    } else {
-      // marcar todos los visibles
-      setSelectedIds((prev) => Array.from(new Set([...prev, ...visiblesIds])));
-    }
+  const toggleSelectAll = () => {
+    if (selectedIds.size === rows.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(rows.map(r => r.IdLiquidacion)));
   };
 
-  // ----------------- Valorizar -----------------
-  const handleAbrirModalValorizar = () => {
-    if (selectedIds.length === 0) {
-      alert("Selecciona al menos una liquidación para valorizar.");
-      return;
-    }
-    // Validamos que sea el mismo cliente en todos los seleccionados
-    const seleccionados = gruposFiltrados.filter((g) =>
-      selectedIds.includes(g.id)
-    );
-    const clientes = Array.from(new Set(seleccionados.map((g) => g.cliente)));
+  // --- LOGICA BOTONES FOOTER ---
+  
+  // 1. VALORIZAR (Solo si seleccionó items NO FACTURADOS)
+  function clickValorizar() {
+    if (selectedIds.size === 0) return alert("Seleccione registros para valorizar.");
+    
+    // Validar que NO estén facturados ya
+    const seleccionados = rows.filter(r => selectedIds.has(r.IdLiquidacion));
+    const yaFacturados = seleccionados.some(r => r.EstadoProceso === 'FACTURADO');
+    
+    if (yaFacturados) return alert("Algunos registros seleccionados YA están facturados. Desmárquelos.");
+    
+    setFacturaManual("");
+    setModalFacturarOpen(true);
+  }
 
-    if (clientes.length > 1) {
-      alert("Solo puedes valorizar liquidaciones de un mismo cliente a la vez.");
-      return;
-    }
+  // 2. ANULAR (Solo si seleccionó items FACTURADOS)
+  function clickAnular() {
+    if (selectedIds.size === 0) return alert("Seleccione registros para anular.");
 
-    // pre-llenar si ya estaba valorizado el primero
-    const firstId = seleccionados[0]?.id;
-    const existing = firstId ? valorizationById[firstId] : null;
-    setModalTipo(existing?.tipo || "FACTURA");
-    setModalSerie(existing?.serie || "");
-    setModalNumero(existing?.numero || "");
+    // Validar que ESTÉN facturados
+    const seleccionados = rows.filter(r => selectedIds.has(r.IdLiquidacion));
+    const noFacturados = seleccionados.some(r => r.EstadoProceso !== 'FACTURADO');
+    
+    if (noFacturados) return alert("Solo se puede anular registros que ya estén FACTURADOS.");
+    
+    // Validar que todos pertenezcan a la misma valorización (opcional, pero recomendado para mantener orden)
+    const uniqueValIds = new Set(seleccionados.map(r => r.IdValorizacion));
+    if (uniqueValIds.size > 1) return alert("Por seguridad, anule una Valorización (Factura) a la vez.");
 
-    setModalOpen(true);
-  };
+    setNotaCredito("");
+    setModalAnularOpen(true);
+  }
 
-  const handleConfirmarValorizar = (e) => {
-    e.preventDefault();
-    if (!modalSerie.trim() || !modalNumero.trim()) {
-      alert("Ingresa serie y número de comprobante.");
-      return;
-    }
-
-    const newVal = {
-      tipo: modalTipo,
-      serie: modalSerie.trim(),
-      numero: modalNumero.trim(),
-    };
-
-    setValorizationById((prev) => {
-      const copy = { ...prev };
-      selectedIds.forEach((id) => {
-        copy[id] = newVal;
+  // --- CONFIRMAR ACCIONES ---
+  async function handleFacturarConfirm() {
+    if (!facturaManual) return alert("Ingrese el N° de Comprobante");
+    
+    try {
+      const res = await fetch("/api/valorizacion/facturar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ids: Array.from(selectedIds),
+          nroFacturaManual: facturaManual
+        })
       });
-      return copy;
-    });
+      const data = await res.json();
+      if (data.ok) {
+        alert(`✅ Valorización creada: ${data.codigo}`);
+        setModalFacturarOpen(false);
+        handleSearch(); // Recargar
+      } else {
+        alert(data.message);
+      }
+    } catch (e) { console.error(e); alert("Error"); }
+  }
 
-    setModalOpen(false);
-  };
+  async function handleAnularConfirm() {
+    if (!notaCredito) return alert("⚠️ Ingrese la Nota de Crédito obligatoria");
+    
+    // Obtenemos el ID de la valorización del primer seleccionado (ya validamos que son iguales)
+    const seleccionados = rows.filter(r => selectedIds.has(r.IdLiquidacion));
+    const idVal = seleccionados[0].IdValorizacion;
 
-  // ----------------- Anular -----------------
-  const handleAnular = () => {
-    if (selectedIds.length === 0) {
-      alert("Selecciona al menos una liquidación para anular su valorización.");
-      return;
-    }
-
-    const seleccionados = gruposFiltrados.filter((g) =>
-      selectedIds.includes(g.id)
-    );
-    const conValor = seleccionados.filter((g) => valorizationById[g.id]);
-
-    if (conValor.length === 0) {
-      alert("Las liquidaciones seleccionadas no tienen valorización registrada.");
-      return;
-    }
-
-    if (
-      !window.confirm(
-        `¿Seguro que deseas anular la valorización de ${conValor.length} liquidación(es)?`
-      )
-    ) {
-      return;
-    }
-
-    setValorizationById((prev) => {
-      const copy = { ...prev };
-      conValor.forEach((g) => {
-        delete copy[g.id];
+    try {
+      const res = await fetch("/api/valorizacion/anular", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idValorizacion: idVal,
+          notaCredito: notaCredito
+        })
       });
-      return copy;
-    });
-  };
+      const data = await res.json();
+      if (data.ok) {
+        alert("✅ Facturación Anulada.");
+        setModalAnularOpen(false);
+        handleSearch();
+      } else {
+        alert(data.message);
+      }
+    } catch (e) { console.error(e); alert("Error"); }
+  }
 
-  // ----------------- Exportar -----------------
-  const handleExportar = () => {
-    if (selectedIds.length === 0) {
-      alert("Selecciona al menos una liquidación para exportar.");
-      return;
-    }
-    const seleccionados = gruposFiltrados.filter((g) =>
-      selectedIds.includes(g.id)
-    );
-    const noValorizadas = seleccionados.filter((g) => !valorizationById[g.id]);
-
-    if (noValorizadas.length > 0) {
-      alert(
-        "Todas las liquidaciones a exportar deben estar valorizadas (con comprobante)."
-      );
-      return;
-    }
-
-    // Aquí, más adelante, llamaremos a un endpoint de exportación.
-    // Por ahora solo mostramos un mensaje para validar flujo.
-    const ids = seleccionados.map((g) => g.id).join(", ");
-    alert(
-      `Exportación simulada.\nLiquidaciones (ids): ${ids}\nMás adelante esto generará el archivo real.`
-    );
-  };
+  const fmtMoney = (n) => Number(n || 0).toLocaleString("es-PE", { minimumFractionDigits: 2 });
 
   return (
     <div className="module-page">
-      
-
-      {/* Bloque 1: Procesar (traer grupos) */}
-      <section className="section-card">
-        <div className="section-header-row">
-          <div>
-            <h2 className="section-title">Procesar liquidaciones</h2>
-            <p className="section-subtitle">
-              Ingresa un rango de fechas y, opcionalmente, una condición de
-              pago. El sistema traerá las liquidaciones agrupadas por cliente,
-              unidad de producción y tipo de evaluación.
-            </p>
-          </div>
-        </div>
-
-        <form onSubmit={handleProcesar}>
-          <div className="form-grid">
+      <div className="section-card section-card-wide">
+        <h3 className="section-title">MÓDULO DE VALORIZACIÓN</h3>
+        
+        {/* FILTROS */}
+        <form className="form-grid" onSubmit={handleSearch}>
             <div className="form-field">
-              <label className="form-label" htmlFor="val-desde">
-                Desde
-              </label>
-              <input
-                id="val-desde"
-                type="date"
-                className="form-input"
-                value={desde}
-                onChange={(e) => setDesde(e.target.value)}
-              />
+                <label className="form-label">Desde</label>
+                <input type="date" className="form-input" value={from} onChange={e => setFrom(e.target.value)} />
             </div>
             <div className="form-field">
-              <label className="form-label" htmlFor="val-hasta">
-                Hasta
-              </label>
-              <input
-                id="val-hasta"
-                type="date"
-                className="form-input"
-                value={hasta}
-                onChange={(e) => setHasta(e.target.value)}
-              />
+                <label className="form-label">Hasta</label>
+                <input type="date" className="form-input" value={to} onChange={e => setTo(e.target.value)} />
             </div>
             <div className="form-field">
-              <label className="form-label" htmlFor="val-cond">
-                Condición de pago
-              </label>
-              <select
-                id="val-cond"
-                className="form-select"
-                value={condicionPago}
-                onChange={(e) => setCondicionPago(e.target.value)}
-              >
-                <option value="TODAS">(Todas)</option>
-                <option value="CREDITO">Crédito</option>
-                <option value="CONTADO">Contado</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="mt-3">
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={loading}
-            >
-              {loading ? "Procesando..." : "Procesar"}
-            </button>
-          </div>
-
-          {errorProcess && (
-            <p className="text-error" style={{ marginTop: 8 }}>
-              {errorProcess}
-            </p>
-          )}
-        </form>
-      </section>
-
-      {/* Bloque 2: Resumen y valorización */}
-      <section className="section-card">
-        <div className="section-header-row">
-          <div>
-            <h2 className="section-title">Liquidaciones para valorizar</h2>
-            <p className="section-subtitle">
-              Filtra por cliente, tipo de evaluación y estado de valorización.
-              Selecciona una o varias filas para valorizar, anular o exportar.
-            </p>
-          </div>
-        </div>
-
-        {/* Filtros */}
-        <div className="filters-row">
-          <div className="form-field" style={{ minWidth: 180 }}>
-            <label className="form-label" htmlFor="f-cli">
-              Cliente
-            </label>
-            <select
-              id="f-cli"
-              className="form-select"
-              value={filtroCliente}
-              onChange={(e) => {
-                setFiltroCliente(e.target.value);
-                setSelectedIds([]);
-              }}
-            >
-              <option value="TODOS">(Todos)</option>
-              {filters.clientes?.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-field" style={{ minWidth: 180 }}>
-            <label className="form-label" htmlFor="f-tipo">
-              Tipo de evaluación
-            </label>
-            <select
-              id="f-tipo"
-              className="form-select"
-              value={filtroTipo}
-              onChange={(e) => {
-                setFiltroTipo(e.target.value);
-                setSelectedIds([]);
-              }}
-            >
-              <option value="TODOS">(Todos)</option>
-              {filters.tipos?.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-field" style={{ minWidth: 180 }}>
-            <label className="form-label" htmlFor="f-est">
-              Estado de valorización
-            </label>
-            <select
-              id="f-est"
-              className="form-select"
-              value={filtroEstadoVal}
-              onChange={(e) => {
-                setFiltroEstadoVal(e.target.value);
-                setSelectedIds([]);
-              }}
-            >
-              <option value="TODOS">(Todos)</option>
-              <option value="SIN">Sin valorizar</option>
-              <option value="CON">Valorizadas</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Tabla */}
-        <div className="table-wrapper">
-          <table className="simple-table">
-            <thead>
-              <tr>
-                <th style={{ width: 40, textAlign: "center" }}>
-                  <input
-                    type="checkbox"
-                    checked={
-                      gruposFiltrados.length > 0 &&
-                      gruposFiltrados.every((g) => selectedIds.includes(g.id))
-                    }
-                    onChange={toggleSelectAllVisible}
-                  />
-                </th>
-                <th>Fecha inicio</th>
-                <th>Cliente</th>
-                <th>Unidad de producción</th>
-                <th>Tipo de evaluación</th>
-                <th style={{ textAlign: "right" }}>Importe</th>
-                <th>Estado</th>
-                <th>Comprobante</th>
-              </tr>
-            </thead>
-            <tbody>
-              {gruposFiltrados.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="table-empty">
-                    Aún no hay liquidaciones para mostrar. Procesa un rango de
-                    fechas y aplica filtros si es necesario.
-                  </td>
-                </tr>
-              ) : (
-                gruposFiltrados.map((g) => {
-                  const v = valorizationById[g.id];
-                  const estado = v ? "Valorizada" : "Sin valorizar";
-                  const comp = v
-                    ? `${v.tipo === "FACTURA" ? "Factura" : "Nota de crédito"} ${
-                        v.serie
-                      }-${v.numero}`
-                    : "-";
-                  return (
-                    <tr key={g.id}>
-                      <td style={{ textAlign: "center" }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.includes(g.id)}
-                          onChange={() => toggleSelectOne(g.id)}
-                        />
-                      </td>
-                      <td>{g.fechaInicioMin || ""}</td>
-                      <td>{g.cliente}</td>
-                      <td>{g.unidadProduccion}</td>
-                      <td>{g.tipoEvaluacion}</td>
-                      <td style={{ textAlign: "right" }}>
-                        {formatMoney(g.importe || 0)}
-                      </td>
-                      <td>{estado}</td>
-                      <td>{comp}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Footer de resumen y acciones */}
-        <div className="summary-footer">
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={handleAbrirModalValorizar}
-            >
-              Valorizar
-            </button>
-            <button
-              type="button"
-              className="btn-primary"
-              style={{ background: "#f97316", boxShadow: "none" }}
-              onClick={handleAnular}
-            >
-              Anular valorización
-            </button>
-            <button
-              type="button"
-              className="btn-primary"
-              style={{ background: "#111827" }}
-              onClick={handleExportar}
-            >
-              Exportar
-            </button>
-          </div>
-
-          <div className="summary-totals">
-            <span className="summary-label">
-              Total visible: S/ {formatMoney(totalVisible)} · Seleccionado:
-            </span>
-            <span className="summary-value">
-              S/ {formatMoney(totalSeleccionado)}
-            </span>
-          </div>
-        </div>
-      </section>
-
-      {/* Modal simple para valorizar */}
-      {modalOpen && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(15,23,42,0.35)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 50,
-          }}
-        >
-          <div
-            className="section-card"
-            style={{
-              width: 420,
-              maxWidth: "95%",
-              boxShadow: "0 20px 45px rgba(15,23,42,0.35)",
-            }}
-          >
-            <h3
-              style={{
-                marginTop: 0,
-                marginBottom: 8,
-                fontSize: "1.15rem",
-              }}
-            >
-              Valorizar liquidaciones seleccionadas
-            </h3>
-            <p
-              style={{
-                marginTop: 0,
-                marginBottom: 12,
-                fontSize: "0.9rem",
-                color: "#4b5563",
-              }}
-            >
-              Asigna el tipo de comprobante y su número. Esta información se
-              utilizará después en el reporte de cierre.
-            </p>
-
-            <form onSubmit={handleConfirmarValorizar} className="form-grid">
-              <div className="form-field" style={{ gridColumn: "1 / span 2" }}>
-                <label className="form-label">Tipo de comprobante</label>
-                <select
-                  className="form-select"
-                  value={modalTipo}
-                  onChange={(e) => setModalTipo(e.target.value)}
-                >
-                  <option value="FACTURA">Factura</option>
-                  <option value="NC">Nota de crédito</option>
+                <label className="form-label">Condición Pago</label>
+                <select className="form-select" value={condicionPago} onChange={e => setCondicionPago(e.target.value)}>
+                    <option value="TODOS">Todos</option>
+                    <option value="CONTADO">Contado</option>
+                    <option value="CREDITO">Crédito</option>
                 </select>
-              </div>
-              <div className="form-field">
-                <label className="form-label">Serie</label>
-                <input
-                  className="form-input"
-                  value={modalSerie}
-                  onChange={(e) => setModalSerie(e.target.value)}
-                />
-              </div>
-              <div className="form-field">
-                <label className="form-label">Número</label>
-                <input
-                  className="form-input"
-                  value={modalNumero}
-                  onChange={(e) => setModalNumero(e.target.value)}
-                />
-              </div>
+            </div>
+            <div style={{ marginTop: 'auto' }}>
+                <button type="submit" className="btn-primary" disabled={loading}>
+                    {loading ? "Buscando..." : "Filtrar"}
+                </button>
+            </div>
+        </form>
+      </div>
 
-              <div
-                style={{
-                  gridColumn: "1 / span 2",
-                  display: "flex",
-                  justifyContent: "flex-end",
-                  gap: 8,
-                  marginTop: 8,
-                }}
-              >
-                <button
-                  type="button"
-                  className="btn-primary"
-                  style={{
-                    background: "#e5e7eb",
-                    color: "#111827",
-                    boxShadow: "none",
-                  }}
-                  onClick={() => setModalOpen(false)}
-                >
-                  Cancelar
-                </button>
-                <button type="submit" className="btn-primary">
-                  Guardar valorización
-                </button>
-              </div>
-            </form>
-          </div>
+      <div className="section-card">
+        <h3 className="section-title">Liquidaciones Disponibles</h3>
+
+        <div className="table-wrapper">
+            <table className="simple-table">
+                <thead>
+                    <tr>
+                        <th width="40"><input type="checkbox" onChange={toggleSelectAll} /></th>
+                        <th>Cliente</th>
+                        <th>Unidad Negocio</th>
+                        <th>Tipo Evaluación</th>
+                        <th style={{textAlign:'right'}}>Importe</th>
+                        <th style={{textAlign:'center'}}>Estado Liq.</th>
+                        <th style={{textAlign:'center'}}>Estado Fac.</th>
+                        <th>Comprobante</th>
+                        <th>Cod. Interno</th>
+                        {/* Se eliminó la columna ACCIÓN */}
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows.length === 0 ? (
+                        <tr><td colSpan={9} className="table-empty">Sin datos</td></tr>
+                    ) : (
+                        rows.map(r => (
+                        <tr key={r.IdLiquidacion} style={{ backgroundColor: r.EstadoProceso === 'FACTURADO' ? '#F0FDF4' : 'white' }}>
+                            <td>
+                                <input 
+                                    type="checkbox" 
+                                    checked={selectedIds.has(r.IdLiquidacion)}
+                                    onChange={() => toggleSelect(r.IdLiquidacion)}
+                                />
+                            </td>
+                            <td>{r.ClienteNombre}</td>
+                            <td>{r.UnidadNegocio}</td>
+                            <td>{r.TipoEvaluacion || "-"}</td>
+                            <td style={{textAlign:'right'}}>{fmtMoney(r.Importe)}</td>
+                            
+                            {/* Estado Liquidación (Siempre será LIQUIDADO porque filtramos así) */}
+                            <td style={{textAlign:'center'}}>
+                                <span style={{background:"#C8E6C9", color:"#256029", padding:"4px 8px", borderRadius:6, fontSize:12, fontWeight:600}}>
+                                    LIQUIDADO
+                                </span>
+                            </td>
+                            
+                            {/* Estado Facturación */}
+                            <td style={{textAlign:'center'}}>
+                                {r.EstadoProceso === 'FACTURADO' 
+                                    ? <span style={{color:'green', fontWeight:'bold', fontSize:'12px'}}>FACTURADO</span>
+                                    : <span style={{color:'#666', fontSize:'12px'}}>NO FACTURADO</span>
+                                }
+                            </td>
+                            
+                            <td>{r.NroComprobante || "-"}</td>
+                            <td>{r.CodigoFacturacion || "-"}</td>
+                        </tr>
+                        ))
+                    )}
+                </tbody>
+            </table>
         </div>
+
+        {/* FOOTER BOTONES */}
+        <div className="summary-footer" style={{ justifyContent: 'flex-end', marginTop: 20 }}>
+             <button className="btn-primary" onClick={() => alert("Función Exportar pendiente...")}>
+                Exportar
+             </button>
+             
+             {/* Botón ANULAR (Rojo) */}
+             <button 
+                className="btn-primary" 
+                style={{ backgroundColor: '#EF4444' }}
+                disabled={selectedIds.size === 0}
+                onClick={clickAnular}
+             >
+                Anular
+             </button>
+
+             {/* Botón VALORIZAR (Verde) */}
+             <button 
+                className="btn-primary" 
+                style={{ backgroundColor: '#10B981' }}
+                disabled={selectedIds.size === 0}
+                onClick={clickValorizar}
+             >
+                Valorizar ({selectedIds.size})
+             </button>
+        </div>
+      </div>
+
+      {/* ======================================================= */}
+      {/* MODAL FACTURAR (VALORIZACIÓN) - MÁS ANCHO Y ESPACIOSO   */}
+      {/* ======================================================= */}
+      {modalFacturarOpen && (
+          <div className="modal-overlay" onClick={() => setModalFacturarOpen(false)}>
+              <div 
+                className="modal-content" 
+                onClick={e => e.stopPropagation()} 
+                // CAMBIO: Aumentamos de 400px a 550px y agregamos padding extra
+                style={{ maxWidth: '550px', padding: '30px' }}
+              >
+                  <h3 style={{ fontSize: '20px', marginBottom: '10px' }}>Nueva Valorización</h3>
+                  
+                  <p style={{ color: '#555', marginBottom: '20px', fontSize: '15px' }}>
+                    Estás a punto de asociar <b>{selectedIds.size}</b> liquidaciones al siguiente comprobante:
+                  </p>
+                  
+                  <label className="form-label" style={{ fontWeight: '600' }}>
+                    N° Factura / Comprobante
+                  </label>
+                  
+                  <input 
+                    className="form-input" 
+                    autoFocus
+                    placeholder="Ej: F001-456"
+                    value={facturaManual} 
+                    onChange={e => setFacturaManual(e.target.value)} 
+                    // CAMBIO: Hacemos el texto más grande para que se lea mejor
+                    style={{ fontSize: '18px', padding: '12px', marginTop: '8px' }}
+                  />
+
+                  <div style={{ display:'flex', gap:'15px', marginTop:'30px', justifyContent:'flex-end' }}>
+                      <button 
+                        className="btn-secondary" 
+                        onClick={() => setModalFacturarOpen(false)}
+                        style={{ padding: '10px 20px' }}
+                      >
+                        Cancelar
+                      </button>
+                      <button 
+                        className="btn-primary" 
+                        onClick={handleFacturarConfirm}
+                        style={{ padding: '10px 25px', fontSize: '15px' }}
+                      >
+                        Guardar Valorización
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* ======================================================= */}
+      {/* MODAL ANULAR - TAMBIÉN ACTUALIZADO                      */}
+      {/* ======================================================= */}
+      {modalAnularOpen && (
+          <div className="modal-overlay" onClick={() => setModalAnularOpen(false)}>
+              <div 
+                className="modal-content" 
+                onClick={e => e.stopPropagation()} 
+                style={{ maxWidth: '550px', padding: '30px' }}
+              >
+                  <h3 style={{ color: '#EF4444', fontSize: '20px', marginBottom: '10px' }}>
+                    Anular Facturación
+                  </h3>
+                  
+                  <p style={{ color: '#555', marginBottom: '20px', fontSize: '15px' }}>
+                    Para proceder con la anulación, es <b>obligatorio</b> ingresar el número de la Nota de Crédito.
+                  </p>
+                  
+                  <label className="form-label" style={{ fontWeight: '600' }}>
+                    N° Nota de Crédito
+                  </label>
+                  
+                  <input 
+                    className="form-input" 
+                    autoFocus
+                    placeholder="Ej: NC001-00025"
+                    value={notaCredito} 
+                    onChange={e => setNotaCredito(e.target.value)} 
+                    style={{ fontSize: '18px', padding: '12px', marginTop: '8px', borderColor: '#EF4444' }}
+                  />
+
+                  <div style={{ display:'flex', gap:'15px', marginTop:'30px', justifyContent:'flex-end' }}>
+                      <button 
+                        className="btn-secondary" 
+                        onClick={() => setModalAnularOpen(false)}
+                        style={{ padding: '10px 20px' }}
+                      >
+                        Cancelar
+                      </button>
+                      <button 
+                        className="btn-primary" 
+                        style={{ backgroundColor: '#EF4444', padding: '10px 25px', fontSize: '15px' }} 
+                        onClick={handleAnularConfirm}
+                      >
+                        CONFIRMAR ANULACIÓN
+                      </button>
+                  </div>
+              </div>
+          </div>
       )}
     </div>
   );
