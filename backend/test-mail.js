@@ -1,4 +1,4 @@
-// backend/test-mail.js
+/* backend/test-mail.js
 import dotenv from "dotenv";
 dotenv.config(); // carga .env desde backend/.env por defecto
 
@@ -21,4 +21,4 @@ async function main() {
 
 main().catch((err) => {
   console.error("❌ Error en test de correo:", err);
-});
+});*/

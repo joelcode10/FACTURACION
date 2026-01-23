@@ -46,18 +46,14 @@ export async function sendInviteEmail({ to, nombre, link }) {
     process.env.SMTP_USER ||
     "no-reply@sistema-local.test";
 
-  const subject = "Invitación al Sistema de Liquidación y Facturación";
+  const subject = "Invitación al Sistema de Facturación Ocupacional";
   const text = `Hola ${nombre},
 
-Has sido invitado a acceder al sistema de liquidaciones CBMEDIC.
 
 Por favor, haz clic en el siguiente enlace para crear tu contraseña y activar tu cuenta:
 ${link}
 
-Si no solicitaste este acceso, puedes ignorar este mensaje.
-
-Saludos,
-Equipo CBMEDIC`;
+Saludos,`;
 
   const tx = getTransporterFromEnv();
 

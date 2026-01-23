@@ -441,10 +441,29 @@ button {
 
 .table-wrapper {
   width: 100%;
-  overflow-x: auto; /* Scroll horizontal si la tabla es muy ancha */
-  max-height: 500px; /* Altura máxima con scroll vertical */
-  border-radius: 12px;
-  border: 1px solid #e5e7eb;
+  /* 1. Definimos una altura máxima visible */
+  max-height: 400px;  /* Puedes cambiar a 50vh o 60vh si prefieres porcentaje */
+  
+  /* 2. Activamos el scroll vertical */
+  overflow-y: auto;
+  overflow-x: auto; /* Mantenemos el horizontal por si acaso */
+  
+  border-radius: 12px 12px 0 0; /* Solo redondeamos arriba */
+  border: 1px solid #E2E8F0;
+  border-bottom: none; /* El borde de abajo lo pone el footer */
+  background: white;
+  margin-top: 16px;
+  
+  /* Sombra suave interna para indicar scroll */
+  background:
+    linear-gradient(white 30%, rgba(255,255,255,0)),
+    linear-gradient(rgba(255,255,255,0), white 70%) 0 100%,
+    radial-gradient(farthest-side at 50% 0, rgba(0,0,0,.1), rgba(0,0,0,0)),
+    radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,.1), rgba(0,0,0,0)) 0 100%;
+  background-repeat: no-repeat;
+  background-color: white;
+  background-size: 100% 40px, 100% 40px, 100% 14px, 100% 14px;
+  background-attachment: local, local, scroll, scroll;
 }
 
 .simple-table {
@@ -456,16 +475,33 @@ button {
 
 .simple-table th,
 .simple-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid #e5e7eb;
-  text-align: left;
-  white-space: nowrap; /* Evita que el texto se parta en varias líneas */
+  padding: 8px 4px;
+  border-bottom: 1px solid #F1F5F9;
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: #334155;
+  background: white; /* Asegura fondo blanco en celdas */
 }
 
 .simple-table th {
-  font-weight: 600;
-  color: #374151;
-  font-size: 0.8rem; /* Headers más pequeños */
+  position: sticky; 
+  top: 0;           /* Se pega al techo del .table-wrapper */
+  z-index: 50;      /* Se asegura de estar encima de las filas */
+  
+  background: #EFF6FF; /* Color de fondo sólido (importante para tapar el texto al hacer scroll) */
+  color: #1E40AF;
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  padding: 10px 4px;
+  border-bottom: 2px solid #DBEAFE;
+  text-align: left;
+  
+  /* Sombra sutil debajo del header para dar profundidad */
+  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
 }
 
 /* Títulos y textos */
@@ -1299,4 +1335,536 @@ button {
 .form-grid {
   display: grid;
   gap: 1rem;
+}
+/* =========================================================
+   NUEVOS ESTILOS: NAVBAR SUPERIOR (Agrega esto al final)
+   ========================================================= */
+
+/* Forzar estructura vertical */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: #f3f4f6;
+}
+
+/* Barra de Navegación Azul */
+.navbar {
+  height: 64px;
+  background: #0F172A; /* Azul noche serio */
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+/* Logo */
+.navbar-left { display: flex; align-items: center; gap: 12px; }
+
+.navbar-title { font-weight: 600; font-size: 1.1rem; letter-spacing: 0.5px; }
+
+/* Menú Central */
+.navbar-center { display: flex; gap: 4px; }
+.nav-item {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #94A3B8;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.nav-item:hover { background: rgba(255,255,255,0.1); color: white; }
+.nav-item.active { background: #2563EB; color: white; }
+
+/* Usuario derecha */
+.navbar-right { display: flex; align-items: center; gap: 16px; }
+.user-info { text-align: right; line-height: 1.2; }
+.user-name { display: block; font-size: 0.85rem; color: #E2E8F0; }
+.user-role { display: block; font-size: 0.7rem; color: #94A3B8; }
+
+.btn-logout {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.2);
+  color: white;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.btn-logout:hover { background: rgba(255,255,255,0.1); }
+
+/* Contenedor que ocupa todo el ancho */
+.main-content-full {
+  flex: 1;
+  padding: 24px;
+  width: 100%;
+  max-width: 100%;
+}
+/* =========================================================
+   ESTILO NAVBAR COMPACTO & FOCUS (Reemplazar bloque anterior)
+   ========================================================= */
+
+/* Estructura Base */
+.app-shell { display: flex; flex-direction: column; min-height: 100vh; background-color: #f3f4f6; }
+.modules-sidebar { display: none !important; }
+
+/* 1. Barra Más Delgada y Elegante */
+.navbar {
+  height: 58px;
+  background: #0F172A;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* Mantiene Logo a la izq y Usuario a la der */
+  padding: 0 24px;
+  position: sticky; 
+  top: 0; 
+  z-index: 100;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+/* 2. Logo Minimalista */
+.navbar-left { display: flex; align-items: center; gap: 12px; }
+
+.navbar-logo {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-weight: 800; 
+  font-size: 1.4rem; /* Reducido de 1.8rem */
+  letter-spacing: -0.5px;
+  color: #fff;
+  cursor: default;
+  display: flex; align-items: center;
+}
+.navbar-logo::after {
+  content: "."; color: #3B82F6; font-size: 1.8rem; line-height: 0; margin-bottom: 6px;
+}
+
+/* Ocultamos el subtítulo en pantallas medianas para limpiar */
+.navbar-title {
+  display: none; /* ELIMINADO VISUALMENTE PARA LIMPIEZA */
+}
+
+/* 3. Módulos "Focus" (Más pequeños) */
+.navbar-center {
+  position: absolute;       /* Se libera del flujo normal */
+  left: 50%;                /* Se mueve al 50% de la pantalla */
+  transform: translateX(-50%); /* Se corrige a sí mismo para estar exactamente al medio */
+  
+  display: flex; 
+  gap: 4px;
+  align-items: center;
+}
+
+.nav-item {
+  padding: 6px 14px; /* Más compacto */
+  border-radius: 6px; /* Menos redondeado (más serio) o 20px si prefieres píldora */
+  font-size: 0.85rem; /* Letra más pequeña y legible */
+  font-weight: 500;
+  color: #94A3B8;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.nav-item:hover { color: #fff; background: rgba(255,255,255,0.05); }
+
+/* El Activo resalta, el resto se apaga */
+.nav-item.active {
+  background: #2563EB; 
+  color: white;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+
+/* 4. Usuario Compacto */
+.navbar-right { display: flex; align-items: center; }
+
+.user-trigger {
+  display: flex; align-items: center; gap: 10px;
+  cursor: pointer; padding: 4px 8px;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+.user-trigger:hover { background: rgba(255,255,255,0.05); }
+
+/* Solo mostramos el nombre, ocultamos el rol para ahorrar espacio */
+.user-details { text-align: right; line-height: 1.1; margin-right: 4px; }
+.user-name { display: block; font-size: 0.85rem; font-weight: 500; color: #E2E8F0; }
+.user-role { display: none; } /* OCULTO POR LIMPIEZA */
+
+.user-avatar {
+  width: 32px; height: 32px; /* Avatar más pequeño */
+  background: #3B82F6; color: white; border-radius: 50%;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 0.8rem;
+  border: 2px solid #1E293B;
+}
+
+/* Dropdown Ajustado */
+.dropdown-menu {
+  position: absolute; top: 110%; right: 0;
+  width: 180px; /* Más estrecho */
+  background: #1E293B; border: 1px solid #334155;
+  border-radius: 8px; padding: 6px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.dropdown-item {
+  padding: 8px 12px; font-size: 0.85rem; color: #CBD5E1; border-radius: 6px; cursor: pointer;
+}
+.dropdown-item:hover { background: rgba(255,255,255,0.1); color: white; }
+.dropdown-item.danger { color: #F87171; margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.05); }
+.dropdown-item.danger:hover { background: rgba(239, 68, 68, 0.1); }
+
+/* =========================================================
+   ESTILOS PARA BARRA DE BÚSQUEDA (FILTROS)
+   ========================================================= */
+
+/* Tarjeta contenedora más limpia */
+.filters-card {
+  background: white;
+  padding: 20px 24px;
+  border-radius: 12px; /* Bordes suaves */
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05); /* Sombra muy sutil */
+  margin-bottom: 24px;
+}
+
+.filters-header {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1E293B;
+  margin-bottom: 16px; /* Espacio entre título e inputs */
+  display: flex; 
+  align-items: center; 
+  gap: 8px;
+}
+
+/* Fila Flexible: Pone los inputs uno al lado del otro */
+.filters-row {
+  display: flex;
+  align-items: flex-end; /* Alinea los inputs con el botón abajo */
+  gap: 16px; /* Espacio entre elementos */
+  flex-wrap: wrap; /* Si la pantalla es chica, bajan ordenadamente */
+}
+
+/* Grupos de Input (Label + Input) */
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filter-label {
+  font-size: 0.75rem; /* Letra pequeña */
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748B;
+  letter-spacing: 0.5px;
+}
+
+.filter-input {
+  height: 40px; /* Altura estándar cómoda */
+  border: 1px solid #CBD5E1;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 0.9rem;
+  min-width: 150px; /* Ancho mínimo */
+  color: #334155;
+  background-color: #fff;
+  transition: all 0.2s;
+}
+
+.filter-input:focus {
+  border-color: #2563EB;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  outline: none;
+}
+
+/* Botón Buscar mejorado */
+.btn-search {
+  height: 30px; /* Misma altura que los inputs .filter-input */
+  padding: 0 5px; /* Menos ancho */
+  background: #2563EB;
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 500;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  
+  /* Flex para alinear icono y texto */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  
+  transition: all 0.2s;
+  box-shadow: 0 2px 5px rgba(37, 99, 235, 0.3);
+}
+.btn-search:hover {
+  background: #1D4ED8;
+  transform: translateY(-1px); /* Pequeño efecto de elevación */
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+}
+.btn-search:active {
+  transform: translateY(0);
+}
+.btn-search:disabled {
+  background: #94A3B8;
+  cursor: not-allowed;
+}
+.search-icon-svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 3;
+}
+/* =========================================================
+   TABLA MODERNA & RESPONSIVA (LIMPIA Y CORREGIDA)
+   ========================================================= */
+/* =========================================================
+   TABLA ULTRA COMPACTA (FIT FINAL 100%)
+   ========================================================= */
+
+.table-wrapper {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #E2E8F0;
+  background: white;
+  margin-top: 16px;
+  /* Quitamos overflow-x para intentar forzar que todo entre, 
+     pero si es muy chico aparecerá scroll nativo */
+  overflow-x: auto; 
+}
+
+.simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed; /* <--- ESTO ES MAGIA: Fuerza a respetar los anchos */
+}
+
+/* --- ENCABEZADOS Y CELDAS --- */
+.simple-table th,
+.simple-table td {
+  padding: 8px 4px; /* Relleno lateral MÍNIMO (4px) para ganar espacio */
+  border-bottom: 1px solid #F1F5F9;
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden; /* Corta lo que sobre */
+  text-overflow: ellipsis; /* Pone "..." */
+}
+
+/* Estilo Header */
+.simple-table th {
+  background: #EFF6FF;
+  color: #1E40AF;
+  font-weight: 700;
+  font-size: 11px; /* Letra pequeña para que entren los títulos */
+  text-transform: uppercase;
+  border-bottom: 2px solid #DBEAFE;
+  text-align: left;
+}
+
+/* Estilo Body */
+.simple-table td {
+  font-size: 12px;
+  color: #334155;
+}
+
+.simple-table tr:hover td {
+  background-color: #F8FAFC;
+}
+.simple-table th:last-child,
+.simple-table td:last-child {
+  text-align: center !important; /* Fuerza el centro */
+  padding: 0 !important;         /* Quita relleno para que sea compacta */
+  vertical-align: middle;
+}
+/* Botón Ver (Ojito) */
+.btn-icon-action {
+  background: transparent;
+  margin: 0 auto;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  color: #94A3B8;
+  display: flex; margin: 0 auto; /* Centrado */
+}
+.btn-icon-action:hover { background: #DBEAFE; color: #2563EB; }
+.btn-icon-action svg { width: 16px; height: 16px; }
+
+/* Badges pequeños */
+.badge-status { padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; display: inline-block; }
+
+/* =========================================================
+   TOOLBAR DE FILTROS (ENCIMA DE LA TABLA)
+   ========================================================= */
+
+.filters-toolbar {
+  display: flex;
+  gap: 12px; /* Espacio entre filtros */
+  background: white;
+  padding: 12px 16px;
+  border: 1px solid #E2E8F0;
+  border-radius: 12px; /* Igual que la tabla */
+  margin-top: 20px;
+  margin-bottom: 8px; /* Pegadito a la tabla */
+  align-items: center;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+}
+
+/* El Input Select Estilizado */
+.toolbar-select {
+  flex: 1; /* Que ocupen el mismo ancho */
+  height: 36px;
+  background-color: #F8FAFC; /* Gris muy clarito */
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 0.85rem;
+  color: #334155;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.toolbar-select:hover {
+  background-color: #fff;
+  border-color: #94A3B8;
+}
+
+.toolbar-select:focus {
+  border-color: #2563EB;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+  background-color: #fff;
+}
+
+/* Opcional: Icono de filtro pequeño antes de los selects */
+.filter-icon-label {
+  color: #64748B;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+}
+/* =========================================================
+   FOOTER DE ACCIONES (TOTALES Y BOTONES) - MODERNO
+   ========================================================= */
+
+.table-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  
+  /* CAMBIO: Quitamos margin-top para pegarlo a la tabla */
+  margin-top: 0; 
+  
+  border: 1px solid #E2E8F0;
+  border-top: 1px solid #E2E8F0; /* Asegura la línea separadora */
+  background: #F8FAFC;
+  border-radius: 0 0 12px 12px; /* Redondeado solo abajo */
+}
+
+/* --- SECCIÓN DE TOTALES --- */
+.footer-totals {
+  display: flex;
+  align-items: center;
+  gap: 24px; /* Espacio entre grupos de datos */
+}
+
+.total-item {
+  display: flex;
+  flex-direction: column; /* Etiqueta arriba, número abajo */
+  gap: 2px;
+}
+
+.total-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: #64748B;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.total-value {
+  font-family: 'Monaco', 'Consolas', monospace; /* Fuente técnica para números */
+  font-size: 0.95rem;
+  color: #334155;
+  font-weight: 600;
+}
+
+/* El TOTAL FINAL destaca más */
+.total-item.highlight .total-value {
+  font-size: 1.2rem;
+  color: #2563EB; /* Azul */
+  font-weight: 800;
+}
+
+/* --- BOTONES DE ACCIÓN --- */
+.footer-actions {
+  display: flex;
+  gap: 12px;
+}
+
+/* Botón Exportar (Estilo Fantasma/Limpio) */
+.btn-export {
+  height: 38px;
+  padding: 0 16px;
+  background: white;
+  border: 1px solid #CBD5E1;
+  color: #475569;
+  font-weight: 600;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex; align-items: center; gap: 8px;
+}
+
+.btn-export:hover:not(:disabled) {
+  border-color: #10B981; /* Borde verde al pasar mouse */
+  color: #10B981;
+  background: #F0FDF4;
+}
+
+/* Botón Liquidar (Primario) */
+.btn-liquidar {
+  height: 38px;
+  padding: 0 20px;
+  background: #2563EB;
+  color: white;
+  border: none;
+  font-weight: 600;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+  transition: all 0.2s;
+  display: flex; align-items: center; gap: 8px;
+}
+
+.btn-liquidar:hover:not(:disabled) {
+  background: #1D4ED8;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3);
+}
+
+/* Estado Deshabilitado */
+.btn-export:disabled,
+.btn-liquidar:disabled {
+  background: #E2E8F0;
+  border-color: transparent;
+  color: #94A3B8;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }

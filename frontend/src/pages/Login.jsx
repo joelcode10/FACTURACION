@@ -5,7 +5,7 @@ import { loginApi } from "../lib/api.js";
 
 export default function Login({ onLogin }) {
   const [user, setUser] = useState("admin");
-  const [pass, setPass] = useState("admin123");
+  const [pass, setPass] = useState("prueba123");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();

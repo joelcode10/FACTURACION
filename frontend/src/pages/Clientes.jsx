@@ -834,37 +834,44 @@ const fmtDate = (d) => {
   return (
     <div className="module-page">
       {/* Procesar (ancho completo) */}
-      <div className="section-card section-card-wide">
-        <h3 className="section-title">BUSQUEDA POR FECHA</h3>
-        <p className="section-subtitle">
-          
-        </p>
+      {/* TARJETA DE BÚSQUEDA RENOVADA */}
+      <div className="filters-card">
+        <div className="filters-header">
+          <span>🔍</span> Panel de Control
+        </div>
 
-        <form className="form-grid" onSubmit={handleProcess}>
-          <div className="form-field">
-            <label className="form-label">Desde</label>
+        <form className="filters-row" onSubmit={handleProcess}>
+          
+          {/* Campo Desde */}
+          <div className="filter-group">
+            <label className="filter-label">Desde</label>
             <input
-              className="form-input"
+              className="filter-input"
               type="date"
               value={from}
               onChange={(e) => setFrom(e.target.value)}
             />
           </div>
-          <div className="form-field">
-            <label className="form-label">Hasta</label>
+
+          {/* Campo Hasta */}
+          <div className="filter-group">
+            <label className="filter-label">Hasta</label>
             <input
-              className="form-input"
+              className="filter-input"
               type="date"
               value={to}
               onChange={(e) => setTo(e.target.value)}
             />
           </div>
-          <div className="form-field">
-            <label className="form-label">Condición de pago</label>
+
+          {/* Campo Condición */}
+          <div className="filter-group">
+            <label className="filter-label">Condición</label>
             <select
-              className="form-select"
+              className="filter-input"
               value={condicionPago}
               onChange={(e) => setCondicionPago(e.target.value)}
+              style={{ minWidth: "180px" }} // Un poco más ancho para el texto
             >
               <option value="TODAS">Todas</option>
               <option value="CONTADO">Contado</option>
@@ -872,20 +879,30 @@ const fmtDate = (d) => {
             </select>
           </div>
 
-          <div className="mt-3" style={{ gridColumn: "1 / -1" }}>
+          {/* Botón Buscar (Alineado a la derecha del grupo o seguido) */}
           <button
             type="submit"
-            className={`btn-primary ${loading ? "btn-loading" : ""}`}
+            className="btn-search"
             disabled={loading}
           >
-            {loading ? "Buscando..." : "Buscar"}
+            {loading ? (
+              "Loading..."
+            ) : (
+              <>
+                <svg className="search-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                </svg>
+                Buscar
+              </>
+            )}
           </button>
-          </div>
+
         </form>
 
+        {/* Mensaje de Error (si existe) */}
         {error && (
-          <div className="text-error" style={{ marginTop: 10 }}>
-            {error}
+          <div style={{ marginTop: 12, color: "#EF4444", fontSize: "0.85rem", display: 'flex', alignItems: 'center', gap: 6 }}>
+             ⚠️ {error}
           </div>
         )}
       </div>
@@ -894,7 +911,7 @@ const fmtDate = (d) => {
       <div className="section-card">
         <div>
             <h3 className="section-title">Resumen de liquidación</h3>
-        </div>
+        </div><br />
         <div className="section-header-row">
           <div className="filter-row">
             <select
@@ -993,116 +1010,106 @@ const fmtDate = (d) => {
                 )}
             </div>
           </div> 
-        </div><br />
+        </div>
 
         <div className="table-wrapper">
           <table className="simple-table">
             <thead>
               <tr>
-                <th>
-                  <input
-                    type="checkbox"
-                    checked={selectAll}
-                    onChange={toggleSelectAll}
-                  />
+                {/* Checkbox (Fijo pequeño) */}
+                <th style={{ width: '30px', textAlign: 'center' }}>
+                  <input type="checkbox" checked={selectAll} onChange={toggleSelectAll} />
                 </th>
-                <th>Cliente</th>
-                <th>Unidad de producción</th>
-                <th>Tipo evaluación</th>
-                <th style={{ textAlign: "right" }}>Importe</th>
-                <th>Estado</th>
-                <th>Código</th>
-                <th>Detalle</th>
+                
+                {/* Cliente: AUTO (Toma todo el espacio libre disponible) */}
+                <th style={{ width: 'auto' }}>Cliente</th>
+                
+                {/* Resto de columnas con % para mantener estructura */}
+                <th style={{ width: '15%' }}>Unidad</th>
+                <th style={{ width: '15%' }}>Tipo</th>
+                <th style={{ width: '10%', textAlign: "right" }}>Importe</th>
+                <th style={{ width: '8%', textAlign: "center" }}>Estado</th>
+                <th style={{ width: '10%', textAlign: "center" }}>Código</th>
+                
+                {/* Ver: Ancho FIJO y pequeño (40px) para que no se vaya a la derecha */}
+                <th style={{ textAlign: "center" }}>Ver</th>
               </tr>
             </thead>
             <tbody>
               {viewGroups.length === 0 ? (
                 <tr>
-                  <td className="table-empty" colSpan={7}>
-                    Sin resultados con los filtros actuales.
+                  <td className="table-empty" colSpan={8} style={{textAlign:'center', padding:20, color:'#999'}}>
+                    Sin resultados.
                   </td>
                 </tr>
-              ) : ( 
+              ) : (
                 viewGroups.map((g) => (
                   <tr key={g.id}>
+                    
+                    {/* Checkbox */}
                     <td>
-                      {/* SOLUCIÓN: 
-                          1. Checkbox SIEMPRE visible (para poder exportar) 
-                          2. Check verde visible si es LIQUIDADO o PARCIAL 
-                      */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                           <input
                             type="checkbox"
                             checked={selectedIds.has(g.id)}
                             onChange={() => toggleSelect(g.id)}
                             style={{ cursor: 'pointer' }}
                           />
-                          
-                          {/* El check verde aparece en LIQUIDADO y en PARCIAL */}
                           {(g.estadoLiquidado === "LIQUIDADO" || g.estadoLiquidado === "PARCIAL") && (
-                              <span style={{ color: 'green', fontWeight: 'bold', fontSize: '12px' }}>✓</span>
+                              <span style={{ color: '#166534', fontSize: '12px', fontWeight:'bold' }}>✓</span>
                           )}
                       </div>
                     </td>
-                    <td>{g.cliente || "-"}</td>
-                    <td>{g.unidadProduccion || "-"}</td>
-                    <td>{g.tipoEvaluacion || "-"}</td>
-                    <td style={{ textAlign: "right" }}>
-                    {fmtMoney(g.importeVisible ?? g.importe)}
-                  </td>
-                   <td>
-                      {g.estadoLiquidado === "LIQUIDADO" && (
-                        <span
-                          style={{
-                            padding: "4px 8px",
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: "#C8E6C9",   // verde claro
-                            color: "#256029",        // verde fuerte
-                          }}
-                        >
-                          Liquidado
-                        </span>
-                      )}
 
-                      {g.estadoLiquidado === "PARCIAL" && (
-                        <span
-                          style={{
-                            padding: "4px 8px",
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: "#FFF3CD",   // amarillo claro
-                            color: "#856404",        // amarillo oscuro
-                          }}
-                        >
-                          Parcial
-                        </span>
-                      )}
-
-                      {g.estadoLiquidado === "NO" && (
-                        <span
-                          style={{
-                            padding: "4px 8px",
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: "#FFCDD2",   // rojo claro
-                            color: "#B71C1C",        // rojo fuerte
-                          }}
-                        >
-                          No liquidado
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ textAlign: "center", fontWeight: 600 }}>{g.codigo ? g.codigo : "-"}</td>
+                    {/* CLIENTE */}
                     <td>
+                      <span className="text-truncate col-w-cliente" title={g.cliente} style={{ color: '#1E293B', fontWeight: 500 }}>
+                        {g.cliente || "-"}
+                      </span>
+                    </td>
+
+                    {/* UNIDAD */}
+                    <td>
+                       <span className="text-truncate col-w-unidad" style={{ color: '#475569' }} title={g.unidadProduccion}>
+                         {g.unidadProduccion || "-"}
+                       </span>
+                    </td>
+
+                    {/* TIPO (Aquí cerramos el hueco) */}
+                    <td>
+                        <span className="text-truncate col-w-tipo" style={{ color: '#475569' }} title={g.tipoEvaluacion}>
+                            {g.tipoEvaluacion || "-"}
+                        </span>
+                    </td>
+                    
+                    {/* IMPORTE */}
+                    <td style={{ textAlign: "right", fontFamily:'monospace', fontWeight: 600, fontSize:'0.85rem' }}>
+                      {fmtMoney(g.importeVisible ?? g.importe)}
+                    </td>
+                    
+                    {/* ESTADO */}
+                    <td style={{textAlign: 'center'}}>
+                      {g.estadoLiquidado === "LIQUIDADO" && <span style={{background:'#F0FDF4', color:'#166534', padding:'1px 6px', borderRadius:4, fontSize:10, border:'1px solid #DCFCE7'}}>LIQ</span>}
+                      {g.estadoLiquidado === "PARCIAL" && <span style={{background:'#FFFBEB', color:'#92400E', padding:'1px 6px', borderRadius:4, fontSize:10, border:'1px solid #FEF3C7'}}>PAR</span>}
+                      {g.estadoLiquidado === "NO" && <span style={{background:'#FEF2F2', color:'#991B1B', padding:'1px 6px', borderRadius:4, fontSize:10, border:'1px solid #FEE2E2'}}>PEN</span>}
+                    </td>
+                    
+                    {/* CÓDIGO */}
+                    <td style={{ textAlign: "center", fontSize: 10, color:'#94A3B8' }}>
+                        {g.codigo || "-"}
+                    </td>
+                    
+                    {/* ACCIÓN */}
+                    <td className="col-action">
                       <button
-                        className="btn-primary btn-sm"
+                        className="btn-icon-action"
                         onClick={() => openDetalle(g.id)}
+                        title="Ver Detalle"
                       >
-                        Ver
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
                       </button>
                     </td>
                   </tr>
@@ -1113,34 +1120,60 @@ const fmtDate = (d) => {
         </div>
 
         {/* Pie: totales + exportar + liquidar */}
-        <div className="summary-footer">
-          <div className="summary-totals">
-            <span className="summary-label">Seleccionados:</span>
-            <span className="summary-value">{selectedIds.size}</span>
-            <span className="summary-label">Subtotal:</span>
-            <span className="summary-value">{fmtMoney(subtotal)}</span>
-            <span className="summary-label">IGV:</span>
-            <span className="summary-value">{fmtMoney(subtotal * 0.18)}</span>
-            <span className="summary-label">Total:</span>
-            <span className="summary-value">{fmtMoney(subtotal * 1.18)}</span>
-          </div>
+        {/* FOOTER DE ACCIONES MODERNO */}
+        <div className="table-footer">
           
-          <div style={{ display: "flex", gap: 8 }}>
+          {/* IZQUIERDA: Totales Organizados Verticalmente */}
+          <div className="footer-totals">
+            
+            <div className="total-item">
+              <span className="total-label">Seleccionados</span>
+              <span className="total-value">{selectedIds.size}</span>
+            </div>
+
+            <div className="total-item">
+              <span className="total-label">Subtotal</span>
+              <span className="total-value">{fmtMoney(subtotal)}</span>
+            </div>
+
+            <div className="total-item">
+              <span className="total-label">IGV (18%)</span>
+              <span className="total-value">{fmtMoney(subtotal * 0.18)}</span>
+            </div>
+
+            {/* Total Destacado en Azul y Grande */}
+            <div className="total-item highlight">
+              <span className="total-label">Total Neto</span>
+              <span className="total-value">{fmtMoney(subtotal * 1.18)}</span>
+            </div>
+            
+          </div>
+
+          {/* DERECHA: Botones con Iconos */}
+          <div className="footer-actions">
+            
             <button
-              className={`btn-primary btn-sm ${exportando ? "btn-loading" : ""}`}
-              disabled={!selectedIds.size || loading || exportando}
+              className="btn-export"
               onClick={exportarSeleccionados}
+              disabled={!selectedIds.size || loading || exportando}
             >
+              {/* Icono Descarga */}
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
               {exportando ? "Exportando..." : "Exportar"}
             </button>
+
             <button
-              className={`btn-primary btn-sm ${liquidando ? "btn-loading" : ""}`}
+              className="btn-liquidar"
               onClick={liquidarSeleccionados}
               disabled={liquidando || !selectedIds.size}
             >
-              {liquidando ? "Liquidando..." : "Liquidar"}
+              {/* Icono Check */}
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+              {liquidando ? "Procesando..." : `Liquidar (${selectedIds.size})`}
             </button>
+            
           </div>
+
         </div>
       </div>
 

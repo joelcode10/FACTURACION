@@ -1,12 +1,15 @@
-// frontend/src/layout/MainLayout.jsx
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext.jsx";
-import ModulesSidebar from "../components/ModulesSidebar.jsx";
-import ClientesPage from "../modules/Clientes.jsx";
-import HHMMPage from "../modules/HHMM.jsx";
-import AuditoriaPage from "../modules/Auditoria.jsx";
-import MantenimientoHHMMPage from "../modules/MantenimientoHHMM.jsx";
-import ValorizarPage from "../modules/Valorizar.jsx";
+
+// === CORRECCIÓN DE RUTAS (Según tu imagen) ===
+import ClientesPage from "../pages/Clientes.jsx";
+
+import AuditoriaPage from "../pages/Auditorias.jsx"; // En tu imagen es plural
+
+import ValorizarPage from "../pages/Valorizar.jsx";
+import UsuariosPage from "../pages/Usuarios.jsx";
+import LiquidacionesClientes from "../pages/LiquidacionesClientes.jsx";
+// Si tienes histórico, impórtalo, si no, usaremos un placeholder.
 
 function MainLayout() {
   const { user, logout } = useAuth();
@@ -14,70 +17,53 @@ function MainLayout() {
 
   function renderModule() {
     switch (selectedModule) {
-      case "clientes":
-        return <ClientesPage />;
-      case "hhmm":
-        return <HHMMPage />;
-      case "auditoria":
-        return <AuditoriaPage />;
-      case "mantenimiento":
-        return <MantenimientoHHMMPage />;
-      case "valorizar":
-        return <ValorizarPage />;
-      default:
-        return <ClientesPage />;
+      case "clientes": return <ClientesPage />;
+      case "auditoria": return <AuditoriaPage />;
+      case "valorizar": return <ValorizarPage />;
+      case "usuarios": return <UsuariosPage />;
+      case "historico": return <LiquidacionesClientes/>;
+      default: return <ClientesPage />;
     }
   }
 
+  // Clase para resaltar el botón activo
+  const navClass = (name) => `nav-item ${selectedModule === name ? "active" : ""}`;
+
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <div className="app-header-left">
-          <div className="app-logo-circle">CB</div>
-          <div>
-            <div className="app-header-title">Sistema de Liquidaciones</div>
-            <div className="app-header-subtitle">
-              Módulo: {selectedModule.toUpperCase()}
-            </div>
-          </div>
+      
+      {/* === BARRA SUPERIOR (NAVBAR) === */}
+      <nav className="navbar">
+        {/* Izquierda: Logo */}
+        <div className="navbar-left">
+          <div className="navbar-logo">CB</div>
+          <span className="navbar-title">Sistema Liquidaciones</span>
         </div>
-        <div className="app-header-right">
-          <span style={{ marginRight: "0.75rem", fontSize: "0.85rem" }}>
-            {user?.username}
-          </span>
-          <button onClick={logout}>Cerrar sesión</button>
+
+        {/* Centro: Menú Horizontal */}
+        <div className="navbar-center">
+          <div className={navClass("clientes")} onClick={() => setSelectedModule("clientes")}>Liquidación</div>
+          <div className={navClass("auditoria")} onClick={() => setSelectedModule("auditoria")}>Auditorías</div>
+          <div className={navClass("valorizar")} onClick={() => setSelectedModule("valorizar")}>Valorizar</div>
+          <div className={navClass("usuarios")} onClick={() => setSelectedModule("usuarios")}>Usuarios</div>
+          <div className={navClass("historico")} onClick={() => setSelectedModule("historico")}>Histórico</div>
         </div>
-      </header>
 
-      <main className="app-main">
-        <aside className="modules-sidebar">
-          <div className="modules-card">
-            <h2 className="modules-title">Módulos</h2>
-            <p className="modules-subtitle">Selecciona el módulo a trabajar</p>
-            <div className="module-list">
-              {/* aquí las tarjetas de módulos que ya tenías */}
-              <div
-                className={
-                  "module-card" + (selectedModule === "clientes" ? " selected" : "")
-                }
-                onClick={() => setSelectedModule("clientes")}
-              >
-                <div className="module-icon lc">LC</div>
-                <div>
-                  <div className="module-info-title">Liquidación Clientes</div>
-                  <div className="module-info-subtitle">
-                    Procesar y exportar liquidaciones.
-                  </div>
-                </div>
-              </div>
-
-              {/* ... resto de módulos hhmm, auditoría, mantenimiento, valorizar ... */}
-            </div>
+        {/* Derecha: Usuario */}
+        <div className="navbar-right">
+          <div className="user-info">
+            <span className="user-name">{user?.username || "Admin"}</span>
+            <span className="user-role">Conectado</span>
           </div>
-        </aside>
+          <button className="btn-logout" onClick={logout}>Salir</button>
+        </div>
+      </nav>
 
-        <section className="module-content">{renderModule()}</section>
+      {/* === CONTENIDO (ANCHO COMPLETO) === */}
+      <main className="main-content-full">
+        {renderModule()}
       </main>
+
     </div>
   );
 }
